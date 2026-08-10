@@ -1,5 +1,7 @@
 import { initDom } from "./src/dom.js";
 import { initUI } from "./src/ui.js";
+import { initLazyImages } from "./src/lazy-images.js";
+import { initCleanup } from "./src/cleanup.js";
 import { MODULE_NAME, defaultSettings } from "./settings.js";
 
 // Import outbound so comfyInjectInterceptor gets registered on globalThis
@@ -33,8 +35,10 @@ function initSettings() {
     console.log("[ComfyInject] Loading...");
 
     initSettings();
+    initLazyImages();
     await initUI();
     initDom();
+    initCleanup();
 
     console.log("[ComfyInject] Ready!");
 })();

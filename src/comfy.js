@@ -1,5 +1,6 @@
 import { MODULE_NAME } from "../settings.js";
 import { resolveSeed } from "./state.js";
+import { saveImageLocally } from "./save.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
 
@@ -183,7 +184,11 @@ export async function generateImage({ prompt, ar, shot, seed, messageIndex, bypa
     const { filename, subfolder } = await pollForResult(promptId, settings.comfy_host, maxAttempts);
     console.log(`[ComfyInject] Image ready: ${filename}`);
 
-    const imageUrl = buildImageUrl(filename, subfolder, settings.comfy_host);
+    const comfyUrl = buildImageUrl(filename, subfolder, settings.comfy_host);
+
+    // Copy the image into SillyTavern so the message does not hotlink to ComfyUI.
+    // Falls back to the ComfyUI URL if saving is disabled or fails.
+    const imageUrl = await saveImageLocally(comfyUrl, filename);
 
     return {
         imageUrl,

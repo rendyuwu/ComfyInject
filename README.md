@@ -4,7 +4,7 @@
 
 A SillyTavern extension that automatically generates images from `[[IMG: ... ]]` markers in bot messages using your local ComfyUI instance.
 
-When your LLM outputs a marker, ComfyInject intercepts it, sends the prompt to ComfyUI, and replaces the marker with the generated image, all without leaving the chat. Multiple images per message are supported. Images are saved permanently into the chat history and survive page reloads. Outbound prompts sent to the LLM replace injected images with a compact token so the model maintains visual continuity across the conversation.
+When your LLM outputs a marker, ComfyInject intercepts it, sends the prompt to ComfyUI, and replaces the marker with the generated image, all without leaving the chat. Multiple images per message are supported. Images are saved permanently into the chat history and survive page reloads. By default each image is also copied into SillyTavern's own image storage, so chats keep loading even when ComfyUI is switched off. Outbound prompts sent to the LLM replace injected images with a compact token so the model maintains visual continuity across the conversation.
 
 <details>
   <summary>Table of Contents</summary>
@@ -24,6 +24,7 @@ When your LLM outputs a marker, ComfyInject intercepts it, sends the prompt to C
     <li><a href="#system-prompt">System Prompt</a></li>
     <li><a href="#image-gallery">Image Gallery</a></li>
     <li><a href="#retry-button">Retry Button</a></li>
+    <li><a href="#local-image-saving">Local Image Saving</a></li>
     <li><a href="#custom-workflows">Custom Workflows</a></li>
     <li><a href="#how-it-works">How It Works</a></li>
     <li><a href="#known-limitations">Known Limitations</a></li>
@@ -122,7 +123,7 @@ ComfyInject won't generate anything unless your LLM knows to output the `[[IMG: 
 
 ## Configuration
 
-All settings are available in the Extensions panel in SillyTavern under **ComfyInject**. The required settings are visible immediately. Everything else is under **Advanced Settings**.
+All settings are available in the Extensions panel in SillyTavern under **ComfyInject**. The required settings and the image storage options are visible immediately. Everything else is under **Advanced Settings**.
 
 ### Connection & Model
 
@@ -131,6 +132,18 @@ All settings are available in the Extensions panel in SillyTavern under **ComfyI
 | `ComfyUI Host` | URL of your ComfyUI instance. Default: `http://127.0.0.1:8188` |
 | `Checkpoint` | Filename of your model as it appears in ComfyUI. Must match exactly. Click the dropdown arrow to fetch available checkpoints. |
 | `Workflow` | Filename of the workflow JSON in the `workflows/` folder. Default: `comfyinject_default.json`. Validated automatically after you stop typing. |
+
+### Local Image Saving
+
+These options sit directly under the Checkpoint and Workflow fields — they are not part of Advanced Settings. See [Local Image Saving](#local-image-saving) for the full behaviour.
+
+| Setting | Description |
+|---|---|
+| `Save generated images to SillyTavern` | Copy each generated image into SillyTavern's own storage and link the message to that copy instead of to ComfyUI. Default: on. Turn it off to go back to hotlinking ComfyUI's `/view` endpoint. |
+| `Downscale before saving` | Shrink and re-encode to WebP before saving. Default: on. |
+| `Max dimension` | Longest edge in pixels after downscaling. Images already smaller are re-encoded but never enlarged. Default: 1280. |
+| `Quality` | WebP quality, 1-100. Default: 82. |
+| `Delete images when their chat is deleted` | Delete a chat's saved images when the chat itself is deleted. Images another chat still shows are always kept. Default: on. |
 
 ### Prompt Control
 
@@ -343,6 +356,37 @@ In messages with multiple images, each retry button only affects its own image �
 
 ---
 
+## Local Image Saving
+
+By default, ComfyInject does not leave your chat pointing at ComfyUI. As soon as an image is generated it is downloaded, shrunk, and copied into SillyTavern's own image storage under `data/<user>/user/images/<character>/`, and the message links to that copy.
+
+This matters for two reasons:
+
+- **Chats load without ComfyUI.** A hotlinked image only renders while the ComfyUI machine is awake and reachable. A saved copy is served by SillyTavern itself.
+- **Chats get dramatically lighter.** A full-size 1.8 MB PNG typically becomes well under 100 KB as WebP, which is the difference between a usable and an unusable chat on a phone.
+
+Saving never costs you an image. If the download, the conversion, or the upload fails, ComfyInject keeps the original ComfyUI URL and warns you instead of losing the result. If only the downscale step fails, the full-size original is saved as-is.
+
+Message images are also marked `loading="lazy"` and `decoding="async"`, so a long chat full of images no longer blocks rendering on pictures that are still off-screen.
+
+### Cleanup when a chat is deleted
+
+SillyTavern deletes only the chat file when you delete a chat, which would otherwise leave every image that chat generated on disk forever. With **Delete images when their chat is deleted** enabled, ComfyInject cleans up after itself.
+
+Because SillyTavern stores images in one folder per *character* — shared by every chat with that character, alongside images from other sources — deletion is deliberately conservative:
+
+- ComfyInject only ever considers images **it saved itself**. Anything else in the folder is left alone.
+- Before deleting, every surviving chat for that character or group is read. An image still referenced by any of them is kept, and handed over to that chat so it stays eligible for cleanup later. This covers branched and duplicated chats, images sitting in a swipe you can still flip back to, and images referenced from continuation history.
+- If any of those checks cannot be completed, nothing is deleted.
+
+Chat renames are tracked, so renaming a chat does not orphan its images.
+
+> **Only applies going forward.** Images generated before this feature existed were never recorded, so deleting those chats will not clean them up. You can remove them by hand from `data/<user>/user/images/<character>/`.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
 ## Custom Workflows
 
 The default workflow (`workflows/comfyinject_default.json`) uses only built-in ComfyUI nodes and works out of the box with any standard checkpoint.
@@ -359,10 +403,12 @@ To use your own workflow, see `workflows/README.md` for placeholder requirements
 2. ComfyInject parses each marker, salvages misplaced control tokens when possible, applies built-in fallbacks for missing fields, and resolves seeds while applying any active locks
 3. For each marker, the workflow is filled with your settings and sent to ComfyUI sequentially
 4. ComfyInject polls `/history` until each image is ready
-5. Each marker is replaced with an `<img>` tag in the chat permanently
-6. Image metadata (AR, shot, prompt ID, filename, effective settings, and repair metadata) is saved to chat metadata keyed by message timestamp for stability across deletions
-7. On the next generation, the outbound interceptor replaces `<img>` tags with `[[IMG: prompt | seed ]]` tokens so the LLM sees a compact text reference instead of raw HTML
-8. Retry buttons are injected via DOM manipulation after each render
+5. The finished image is downloaded from ComfyUI, downscaled to WebP, and uploaded into SillyTavern's own image storage, so the message can point at a local copy instead of hotlinking ComfyUI. On any failure it falls back to the ComfyUI URL
+6. Each marker is replaced with an `<img>` tag in the chat permanently
+7. Image metadata (AR, shot, prompt ID, filename, effective settings, and repair metadata) is saved to chat metadata keyed by message timestamp for stability across deletions
+8. The saved image is recorded against the current chat so it can be cleaned up if that chat is ever deleted
+9. On the next generation, the outbound interceptor replaces `<img>` tags with `[[IMG: prompt | seed ]]` tokens so the LLM sees a compact text reference instead of raw HTML
+10. Retry buttons are injected via DOM manipulation after each render
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -370,9 +416,10 @@ To use your own workflow, see `workflows/README.md` for placeholder requirements
 
 ## Known Limitations
 
-- Images link to your local ComfyUI `/view` endpoint. If ComfyUI is not running on reload, images will not display (the `<img>` tag is saved but the file must be served by ComfyUI).
+- With **Save generated images to SillyTavern** turned off, images link to your local ComfyUI `/view` endpoint instead. If ComfyUI is not running on reload, those images will not display (the `<img>` tag is saved but the file must be served by ComfyUI).
 - The generating placeholder may not appear on some versions of SillyTavern. This is a cosmetic limitation with no impact on functionality.
-- Deleted messages leave orphaned image files in ComfyUI's output folder. ComfyInject does not delete these files — manage your ComfyUI output folder as needed.
+- Deleted messages leave orphaned image files in ComfyUI's output folder. ComfyInject does not delete these files — manage your ComfyUI output folder as needed. Cleanup on chat deletion only covers the copies saved inside SillyTavern.
+- Images generated before local saving existed were never recorded, so deleting those chats will not clean them up. See [Local Image Saving](#local-image-saving).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -389,6 +436,14 @@ Alternatively, open your ComfyUI root folder and navigate to `ComfyUI/models/che
 You can also find it in ComfyUI itself — open ComfyUI, load any workflow, and find the Load Checkpoint node. Click the dropdown on that node and you'll see a list of all your available models. Note down whichever one you want and type it exactly into ComfyInject's Checkpoint field.
 
 If the checkpoints folder is empty or the dropdown shows nothing, you'll need to download a model first. SD1.5 is a good beginner friendly starting point. You can find models on Hugging Face or Civitai. Once downloaded, drop the model file into the `ComfyUI/models/checkpoints` folder and restart ComfyUI. After that, the model should appear in both ComfyUI and ComfyInject's dropdown.
+
+---
+
+### Where are the generated images stored?
+
+In two places. ComfyUI writes its own full-size output to its `output/` folder as always — ComfyInject never touches that. Separately, a downscaled WebP copy is saved inside SillyTavern at `data/<user>/user/images/<character>/`, and that copy is what your chat actually displays.
+
+That means you can clear ComfyUI's `output/` folder without breaking your chats. Deleting a chat removes the copies saved inside SillyTavern for it, but never anything in ComfyUI's output folder. See [Local Image Saving](#local-image-saving).
 
 ---
 

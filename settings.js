@@ -18,6 +18,23 @@ export const defaultSettings = Object.freeze({
     // The filename of the workflow JSON in the workflows folder.
     workflow: "comfyinject_default.json",
 
+    // --- Local Image Saving ---
+    // When enabled, generated images are copied into SillyTavern's own image
+    // storage and the message links to that copy instead of to ComfyUI.
+    // Chats then load without ComfyUI having to be reachable.
+    save_images_locally: true,
+
+    // Shrink and re-encode images to WebP before saving them.
+    // A 1.8 MB PNG typically becomes well under 100 KB.
+    downscale_before_saving: true,
+    downscale_max_dimension: 1280,
+    webp_quality: 82,
+
+    // Delete a chat's saved images when the chat itself is deleted.
+    // SillyTavern removes only the chat file, so images otherwise pile up
+    // forever. Images that another chat still shows are always kept.
+    delete_images_with_chat: true,
+
     // --- Negative Prompt ---
     negative_prompt: "worst quality, low quality, blurry, deformed, ugly, extra limbs",
 

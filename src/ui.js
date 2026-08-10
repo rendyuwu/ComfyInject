@@ -118,6 +118,17 @@ function updateSeedLockUI(locked) {
 
 
 /**
+ * Updates the local image saving sub-options visibility based on
+ * whether saving and downscaling are enabled.
+ * @param {boolean} saving - Whether local image saving is enabled
+ * @param {boolean} downscaling - Whether downscaling is enabled
+ */
+function updateSaveImagesUI(saving, downscaling) {
+    $("#comfyinject_save_images_options").toggle(saving);
+    $("#comfyinject_downscale_inputs").toggle(saving && downscaling);
+}
+
+/**
  * Populates all input fields from current settings.
  */
 function populateUI() {
@@ -135,6 +146,14 @@ function populateUI() {
     $("#comfyinject_scheduler").val(settings.scheduler);
     $("#comfyinject_denoise").val(settings.denoise);
     $("#comfyinject_max_poll_attempts").val(settings.max_poll_attempts);
+
+    // Local image saving
+    $("#comfyinject_save_images_locally").prop("checked", settings.save_images_locally);
+    $("#comfyinject_downscale_before_saving").prop("checked", settings.downscale_before_saving);
+    $("#comfyinject_downscale_max_dimension").val(settings.downscale_max_dimension);
+    $("#comfyinject_webp_quality").val(settings.webp_quality);
+    $("#comfyinject_delete_images_with_chat").prop("checked", settings.delete_images_with_chat);
+    updateSaveImagesUI(settings.save_images_locally, settings.downscale_before_saving);
 
     // Resolution lock
     $("#comfyinject_resolution_lock_enabled").prop("checked", settings.resolution_lock_enabled);
@@ -331,6 +350,40 @@ function wireEvents() {
         saveSettings();
     });
 
+    // Local image saving — toggle
+    $("#comfyinject_save_images_locally").on("change", function () {
+        const settings = getSettings();
+        settings.save_images_locally = $(this).prop("checked");
+        updateSaveImagesUI(settings.save_images_locally, settings.downscale_before_saving);
+        saveSettings();
+    });
+
+    // Local image saving — downscale toggle
+    $("#comfyinject_downscale_before_saving").on("change", function () {
+        const settings = getSettings();
+        settings.downscale_before_saving = $(this).prop("checked");
+        updateSaveImagesUI(settings.save_images_locally, settings.downscale_before_saving);
+        saveSettings();
+    });
+
+    // Local image saving — delete images with their chat
+    $("#comfyinject_delete_images_with_chat").on("change", function () {
+        getSettings().delete_images_with_chat = $(this).prop("checked");
+        saveSettings();
+    });
+
+    // Local image saving — max dimension
+    $("#comfyinject_downscale_max_dimension").on("input", function () {
+        getSettings().downscale_max_dimension = parseInt($(this).val(), 10);
+        saveSettings();
+    });
+
+    // Local image saving — WebP quality
+    $("#comfyinject_webp_quality").on("input", function () {
+        getSettings().webp_quality = parseInt($(this).val(), 10);
+        saveSettings();
+    });
+
     // Resolution lock — toggle
     $("#comfyinject_resolution_lock_enabled").on("change", function () {
         const locked = $(this).prop("checked");
@@ -440,10 +493,20 @@ function wireEvents() {
         saveSettings();
     });
 
-    // Reset button — resets everything except comfy_host, checkpoint, and workflow
+    // Reset button — resets the advanced settings only, so everything
+    // outside the Advanced block is preserved
     $("#comfyinject_reset").on("click", function () {
         const settings = getSettings();
-        const { comfy_host, checkpoint, workflow } = settings;
+        const {
+            comfy_host,
+            checkpoint,
+            workflow,
+            save_images_locally,
+            downscale_before_saving,
+            downscale_max_dimension,
+            webp_quality,
+            delete_images_with_chat,
+        } = settings;
 
         // Reset to defaults
         Object.assign(settings, structuredClone(defaultSettings));
@@ -452,6 +515,13 @@ function wireEvents() {
         settings.comfy_host = comfy_host;
         settings.checkpoint = checkpoint;
         settings.workflow = workflow;
+
+        // Restore local image saving settings
+        settings.save_images_locally = save_images_locally;
+        settings.downscale_before_saving = downscale_before_saving;
+        settings.downscale_max_dimension = downscale_max_dimension;
+        settings.webp_quality = webp_quality;
+        settings.delete_images_with_chat = delete_images_with_chat;
 
         saveSettings();
         populateUI();

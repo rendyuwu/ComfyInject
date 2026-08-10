@@ -37,6 +37,51 @@
 
             <hr class="sysHR" />
 
+            <!-- Local Image Saving -->
+            <div>
+                <label class="checkbox_label" for="comfyinject_save_images_locally" title="Copy generated images into SillyTavern instead of linking to ComfyUI. Chats then load even when ComfyUI is off.">
+                    <input id="comfyinject_save_images_locally" type="checkbox" />
+                    <span>Save generated images to SillyTavern</span>
+                </label>
+
+                <div id="comfyinject_save_images_options" style="margin-top: 4px;">
+                    <label class="checkbox_label" for="comfyinject_downscale_before_saving" title="Shrink and re-encode to WebP before saving. Cuts image size by well over 90% and makes chats load much faster on phones.">
+                        <input id="comfyinject_downscale_before_saving" type="checkbox" />
+                        <span>Downscale before saving</span>
+                    </label>
+
+                    <div id="comfyinject_downscale_inputs" class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                        <label style="width: 100px;">Max dimension</label>
+                        <input
+                            id="comfyinject_downscale_max_dimension"
+                            type="number"
+                            class="text_pole"
+                            min="256"
+                            max="4096"
+                            step="64"
+                            style="width: 80px;"
+                        />
+                        <label style="width: 50px;">Quality</label>
+                        <input
+                            id="comfyinject_webp_quality"
+                            type="number"
+                            class="text_pole"
+                            min="1"
+                            max="100"
+                            step="1"
+                            style="width: 70px;"
+                        />
+                    </div>
+
+                    <label class="checkbox_label" for="comfyinject_delete_images_with_chat" title="When a chat is deleted, also delete the images it generated. Images that another chat still shows are kept.">
+                        <input id="comfyinject_delete_images_with_chat" type="checkbox" />
+                        <span>Delete images when their chat is deleted</span>
+                    </label>
+                </div>
+            </div>
+
+            <hr class="sysHR" />
+
             <!-- Gallery Button -->
             <div class="flex-container flexGap5">
                 <div id="comfyinject_gallery_btn" class="menu_button menu_button_icon">
