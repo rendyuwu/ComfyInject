@@ -179,6 +179,7 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Generate Policy` | `Always` (default) illustrates every character message: the prompter only decides *what* to draw. `Judge` lets it decide whether the moment deserves an image at all. User messages never produce an image either way. See [Generate policy](#generate-policy). |
 | `Max images per message` | Hard cap applied after validation, whatever the model returns. Default: 1. |
 | `Max tags` | Hard cap on comma-separated tags per image prompt, truncated at a comma so a tag is never cut in half. `0` (default) turns it off. Enforced after the reply comes back rather than asked for in the prompt. It bounds only what the prompter writes — **Prepend Prompt**, the shot tag and **Append Prompt** are added afterwards and are not counted. |
+| `Banned tags` | Comma-separated tags the prompter may not write. Stated in **OUTPUT RULES** and removed from the reply either way, before **Max tags** counts. Whole tags only, matched with `_` treated as a space, so banning either of `hand_holding` and `hand holding` catches both while `spine` leaves `spine_tattoo` alone. Also applied to the appearance registry's seeding pass. Empty by default. Not the same tool as **Negative Prompt** — see [Banning tags](#banning-tags). |
 | `Use the appearance registry` | Send the per-chat appearance registry to the prompter. Default: on. See [Appearance Registry](#appearance-registry). |
 | `Seed the registry automatically` | Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards and every bound lorebook. Default: on. |
 | `Registry Scope` | `All` (default) sends every registry entry. `Present` sends only the character card's own cast plus anyone named in the target message or the history window. See [Appearance Registry](#appearance-registry) for the cost. |
@@ -188,7 +189,8 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Include character card` / `user persona` / `author's note` / `running summary` | Which context sections to send. Card, persona and summary default to on; author's note defaults to off. |
 | `World Info` | `Activated entries only` (default) or `Off`. Entries are read in dry-run mode, so the main chat's sticky, cooldown and recursion state is never touched. |
 | `Max chars` | Character cap on the World Info section. Default: 4000. |
-| `Prompter Instructions` | The prompter's system prompt, rendered as the **TASK** section, first. Role and framing. There is one shipped default per **Generate Policy**, and switching the policy carries an untouched field over to the matching text while leaving an edited one alone. |
+| `Prompter Instructions` | The prompter's system prompt, rendered as the **TASK** section, first. Role and framing. There is one shipped default per **Generate Policy**, and switching the policy carries an untouched field over to the matching text while leaving an edited one alone. Safe to rewrite wholesale: the output contract lives in **OUTPUT RULES**, not here. |
+| `Constraints` | Free text rendered as the **CONSTRAINTS** section, immediately after **TASK**. Empty by default and left out entirely when empty. Standing facts about your *checkpoint* rather than your story, so you never have to edit the shipped instructions to state one. Lives in the unchanging half of the request, so a long block here is cached rather than re-sent every message. See [Constraints and Final Instructions](#constraints-and-final-instructions). |
 | `Example Image Prompt` | The `prompt` string inside the worked example in **OUTPUT RULES**. See [Tuning the prompter](#tuning-the-prompter) — this is the field to change for a checkpoint that can only draw simple scenes. |
 | `Final Instructions` | Free text rendered as the **last** section of the request, after the target message. Empty by default, and left out entirely when empty. |
 | `User Turn` | The ask, appended at the end of the request's user message. |
@@ -198,7 +200,7 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Seeding Final Instructions` | The seeding pass's own **last** section, empty by default and left out entirely when empty. Deliberately separate from **Final Instructions**: see [Tuning the prompter](#tuning-the-prompter). |
 | `Seeding User Turn` | The user message that asks the seeding pass for its reply. Emptying it falls back to the shipped default rather than to **User Turn**, which asks for something else entirely. |
 
-Every prompt field above has a **Restore default** button that restores only that field. Your edits are never overwritten on update, and they all survive **Reset Advanced Settings**.
+Every prompt field whose shipped default is not empty has a **Restore default** button that restores only that field. The fields that default to empty — **Constraints**, **Banned tags**, **Final Instructions**, **Seeding Final Instructions**, **Assistant Prefill** — have none, because a button that clears a field you just filled is a footgun dressed as a convenience. Your edits are never overwritten on update, and they all survive **Reset Advanced Settings**.
 
 ### Prompt Control
 
@@ -437,27 +439,29 @@ Two messages. The split is on the static/volatile line, which is a cost decision
 **`messages[0]`, the system message.** Everything that does not change from one character message to the next:
 
 1. **TASK** — your **Prompter Instructions**.
-2. **APPEARANCE REGISTRY** — the per-chat appearance cache. Moves to the volatile message when **Registry Scope** is `Present`.
-3. **SESSION** — chat id, character or group name, persona name.
-4. **CHARACTER CARD** — description, personality, scenario and depth prompt, macro-resolved, with chat-level overrides honoured. First messages and example dialogue are deliberately left out: they cost tokens and teach prose style the prompter must not imitate.
-5. **USER PERSONA**
-6. **AUTHOR NOTE** — off by default.
-7. **OUTPUT RULES** — the schema and the hard constraints.
+2. **CONSTRAINTS** — your **Constraints**. Omitted entirely when empty.
+3. **APPEARANCE REGISTRY** — the per-chat appearance cache. Moves to the volatile message when **Registry Scope** is `Present`.
+4. **SESSION** — chat id, character or group name, persona name.
+5. **CHARACTER CARD** — description, personality, scenario and depth prompt, macro-resolved, with chat-level overrides honoured. First messages and example dialogue are deliberately left out: they cost tokens and teach prose style the prompter must not imitate.
+6. **USER PERSONA**
+7. **AUTHOR NOTE** — off by default.
+8. **OUTPUT RULES** — the schema and the hard constraints, including the output contract and your **Banned tags**.
 
 **`messages[1]`, the user message.** Everything that changes every turn:
 
-8. **RUNNING SUMMARY** — whatever the Summarize extension last wrote. This is what keeps a long chat legible past the history window.
-9. **WORLD INFO**
-10. **RECENT HISTORY** — the last N messages, with the scope stated in the section header so the model knows what it is missing.
-11. **TARGET MESSAGE** — the message being illustrated.
-12. **FINAL INSTRUCTIONS** — your **Final Instructions**. Omitted entirely when empty.
-13. **User Turn** — the ask, appended plainly at the end.
+9. **RUNNING SUMMARY** — whatever the Summarize extension last wrote. This is what keeps a long chat legible past the history window.
+10. **WORLD INFO**
+11. **RECENT HISTORY** — the last N messages, with the scope stated in the section header so the model knows what it is missing.
+12. **TARGET MESSAGE** — the message being illustrated.
+13. **FINAL INSTRUCTIONS** — your **Final Instructions**. Omitted entirely when empty.
+14. **User Turn** — the ask, appended plainly at the end.
 
 The ordering rule is unchanged: reference data first, standing orders last, and **Final Instructions** is still the last thing the model reads before the ask.
 
-Four things worth knowing about how that context is read:
+Five things worth knowing about how that context is read:
 
 - **World Info is read in dry-run mode.** Sticky, cooldown and recursion state in your main chat is never touched, and no `WORLD_INFO_ACTIVATED` event is emitted. The prompter can see your lorebook without disturbing the roleplay's own lore rotation.
+- **The rule about the registry travels with the registry.** "Use these tags verbatim" is the first line of the **APPEARANCE REGISTRY** section itself, not a line in **Prompter Instructions**, so it appears exactly when there are entries to obey and vanishes with them. A fresh chat, before its first seeding pass, is not told to consult a section that is not there.
 - **ComfyInject's own output is stripped out.** Every `<img>` tag and every `[[IMG: ...]]` marker is removed from the history and from the target message before the prompter sees them, so the prompter never learns to imitate its own past output.
 - **Macros are resolved in everything you typed.** `{{char}}`, `{{user}}` and the rest of SillyTavern's macro set expand in every prompter field, in **Prepend Prompt** and **Append Prompt**, in appearance registry tags, and in group member cards. See [Macros in prompter fields](#macros-in-prompter-fields).
 - **Macros are *not* resolved a second time in the roleplay's own text.** World info, history and the target message arrive already resolved by SillyTavern, so braces a character wrote in dialogue survive verbatim.
@@ -479,7 +483,9 @@ Switching the policy also switches which text **Restore default** writes into **
 
 `{{char}}`, `{{user}}`, `{{persona}}`, `{{time}}`, `{{random:a,b}}` — the full SillyTavern macro set — expand at request time in every field you can type into:
 
-**Prompter Instructions**, **Example Image Prompt**, **Final Instructions**, **User Turn**, **Seeding Instructions**, **Seeding Example Tags**, **Seeding Final Instructions**, **Seeding User Turn**, **Prepend Prompt**, **Append Prompt**, and appearance registry tags.
+**Prompter Instructions**, **Constraints**, **Example Image Prompt**, **Final Instructions**, **User Turn**, **Seeding Instructions**, **Seeding Example Tags**, **Seeding Final Instructions**, **Seeding User Turn**, **Prepend Prompt**, **Append Prompt**, and appearance registry tags.
+
+**Banned tags** is the one exception: it is a list of tags to match, not text to send, so it is compared literally.
 
 Two footguns:
 
@@ -500,6 +506,7 @@ That is why the request is split the way it is. The system message holds only wh
 |---|---|
 | `Registry Scope: All` | `Registry Scope: Present` — the registry then depends on the target message and moves to the volatile message |
 | Fixed text in the prompter fields | `{{random}}`, `{{roll}}`, `{{time}}` in a system-message field |
+| Long standing rules in **Constraints** | The same text in **Final Instructions**, which is charged in full every message |
 | — | Discovering a new NPC, which rewrites the registry once and then settles |
 
 **`History messages` is the biggest lever, not the caching.** The volatile message is charged at full price every turn whatever the layout does, and history is most of it. Lowering it from 12 to 6 saves more than anything else on this list; the default is 6 for that reason. **Anchor stride** is a second-order win on top: it holds the window's start still so the volatile text is append-only between jumps.
@@ -508,9 +515,11 @@ Turn on **Debug logging** to check any of this. It reports both block sizes and 
 
 ### Tuning the prompter
 
-Two cases need more than **Prompter Instructions**, and both have their own field.
+Every case below is served by a field of its own, and none of them asks you to rewrite **Prompter Instructions**. That is deliberate. **Prompter Instructions** is role and framing; the output contract that has to hold whatever you write lives in **OUTPUT RULES**, where you cannot accidentally delete it. So the field is genuinely safe to rewrite — but an untouched one keeps receiving improvements on update, and an edited one cannot, so it is worth reaching for a narrower field first.
 
-**Your checkpoint can only draw simple scenes.** A small SD1.5 or an anime-tag model falls apart past a handful of tags. Writing *"keep prompts short and simple"* into **Prompter Instructions** usually does nothing, because the worked example in **OUTPUT RULES** immediately below it shows thirteen tags — an example of a good reply outweighs a description of one. Change the example instead:
+#### Your checkpoint can only draw simple scenes
+
+A small SD1.5 or an anime-tag model falls apart past a handful of tags. Writing *"keep prompts short and simple"* into **Prompter Instructions** usually does nothing, because the worked example in **OUTPUT RULES** immediately below it shows thirteen tags — an example of a good reply outweighs a description of one. Change the example instead:
 
 | Field | Value |
 |---|---|
@@ -519,22 +528,101 @@ Two cases need more than **Prompter Instructions**, and both have their own fiel
 
 The example teaches the shape; **Max tags** enforces it whatever the model does with the hint. Asking politely is least reliable in exactly the case where it matters most, since a small model is also a poorly-instruction-following one — so the cap is applied to the reply rather than requested in the prompt. It truncates at a comma, so a tag is never cut in half, and a truncation is reported in the console whether or not debug logging is on.
 
-**Your prompter model refuses.** The prompter is a text model asked to describe what a roleplay is actually doing, and on some backends that needs a standing framing. A standing framing's effectiveness depends on its position: it belongs at the end of the prompt, which is what **Final Instructions** is for. Two slots, the same split SillyTavern's own system prompt and post-history instructions use:
+#### Banning tags
 
-- **Prompter Instructions** — role and framing. Read before the reference data it frames.
-- **Final Instructions** — overrides. The last thing the model reads, so a rule stated here beats a contradicting rule above it.
+**Banned tags** is the same argument taken one step further. A checkpoint that can only compose one figure does not need to be *asked* not to write `2girls`:
 
-If a rule is not being followed, move it from the first field to the second before rewording it.
+```
+2girls, multiple_girls, 1boy, hug, couple, hand_holding, kiss,
+leaning_on_person, head_on_chest, carrying, piggyback, sitting_on_lap
+```
 
-**The seeding pass is a separate call**, with the same refusal risk and none of the directive pass's fields applied to it. It gets the same four slots of its own: **Seeding Instructions**, **Seeding Example Tags**, **Seeding Final Instructions** and **Seeding User Turn**.
+The list is stated in **OUTPUT RULES** and removed from the reply either way. Stating it is the cheap half — it is what covers a model that writes "two girls" as prose — and removing it is the half that actually works, because a model follows *"do not write X"* far less reliably than *"write Y"*.
+
+Four details worth knowing:
+
+- **Whole tags, not substrings.** `_` counts as a space, so banning either of `hand_holding` and `hand holding` catches both. Banning `spine` does **not** touch `spine_tattoo` — a substring ban is silent tag loss, which is also why wildcards and regex are not supported.
+- **The ban runs before `Max tags` counts.** A banned tag never spends one of your cap slots.
+- **It applies to the seeding pass too.** A banned tag that reached a registry entry would be injected into every later request, so it is never allowed into the registry in the first place.
+- **The recital is capped at about 400 characters; enforcement is not.** A hundred banned tags cost you a `Set` lookup, not a hundred tags of prompt on every request.
+
+Two things **Banned tags** is not:
+
+- **Not the Negative Prompt.** [Negative Prompt](#prompt-control) is negative conditioning handed to the *image* model. This stops the *text* model writing the tag at all. For composition tags like `2girls` the negative prompt is the weaker tool, because SD negatives do not reliably suppress composition — the bodies still show up, slightly discouraged.
+- **Not applied to Prepend Prompt or Append Prompt.** Those are added after the prompter is done, in `comfy.js`. A banned tag appearing in one of them is you contradicting yourself, not the model misbehaving — same caveat **Max tags** already carries.
+
+#### Constraints and Final Instructions
+
+Both are free text you own outright. They differ by **cost and position**, not by purpose:
+
+| | Position | Cost | Use for |
+|---|---|---|---|
+| **Constraints** | Early — right after **Prompter Instructions** | In the unchanging half, so it is cached rather than re-sent | Long, static standing rules. Renderer facts, standing framing preamble. |
+| **Final Instructions** | Last — after the target message | In the changing half, charged in full every message | Short overrides that have to win. |
+
+**Constraints** is where a fact about your *checkpoint* belongs: *"this checkpoint renders one figure only; a second body enters frame only as a POV"*, *"the camera is a third party, never the user's eyes"*, *"move fabric in the narrative before tagging an outfit change"*. These outlive your character cards, your chats and your policy switches, which is exactly why they should not be tangled into **Prompter Instructions**, and why they should not be paying the volatile half's price on every message.
+
+**Final Instructions** stays the strongest slot, because position is what makes a rule win. If a rule is not being followed, move it there before rewording it.
+
+Which means: a long standing framing preamble goes in **Constraints**, and the one line that has to beat everything else goes in **Final Instructions**. The section is titled `CONSTRAINTS` whatever you put in it — a section announcing itself as a standing framing raises the refusal rate on a safety-trained model rather than lowering it.
+
+One caveat, sharper here than anywhere else: a re-rolling macro like `{{random:a,b}}` in **Constraints** rewrites the cached prefix on every single request, which is precisely the cost the field exists to avoid. See [Prompt caching](#prompt-caching).
+
+**Constraints** applies to the directive pass only. Renderer limits mean nothing to a pass whose whole job is extracting appearance tags.
+
+#### The seeding pass is a separate call
+
+It carries the same refusal risk and none of the directive pass's fields. It gets four slots of its own: **Seeding Instructions**, **Seeding Example Tags**, **Seeding Final Instructions** and **Seeding User Turn**.
 
 They are deliberately not shared with the directive pass's, because the two ask different questions — generation policy is meaningless to a pass whose whole job is extracting stable appearance tags. The practical consequence: **a standing framing usually belongs in both.** The seeding call runs first, once per chat, before the first image; if it is refused the registry stays empty, and an empty registry degrades every image after it. That failure is quiet — per-message prompts keep working, the pictures just stop agreeing with each other. If registry entries come back empty while the prompter is otherwise fine, that is the pass to look at.
 
-**Your prompter model is small and local.** Beyond the example and the tag cap, turn **Schema in Prompt** to `Auto`. The schema JSON is about 1,900 characters, and while the backend is enforcing the schema server-side those characters are pure noise competing with your instructions — worst on exactly the models that follow instructions least well. On `Auto` it is left out while native enforcement is active and the request is rebuilt with it if the backend refuses, so nothing is lost either way. The default is `Always` only because it is what shipped.
+**Banned tags** is the exception: one setting drives both passes, because a banned tag is a fact about the renderer and the renderer does not change between passes.
 
-One more thing:
+#### Your prompter model is small and local
 
-- **Assistant Prefill** is the narrowest field here. `generateRaw` — the transport used when no Connection Profile is selected — accepts a prefill; `ConnectionManagerRequestService` has no prefill parameter, and a prefill contradicts native structured output anyway, since the backend is already constrained. The panel states whether yours would actually be sent rather than ignoring it quietly. **Prompter Instructions** and **Final Instructions** cover the standing framing case on both transports; reach for a prefill only if they have not.
+Beyond the example and the tag cap, turn **Schema in Prompt** to `Auto`. The schema JSON is about 1,900 characters, and while the backend is enforcing the schema server-side those characters are pure noise competing with your instructions — worst on exactly the models that follow instructions least well. On `Auto` it is left out while native enforcement is active and the request is rebuilt with it if the backend refuses, so nothing is lost either way. The default is `Always` only because it is what shipped.
+
+#### Assistant Prefill
+
+The narrowest field here. `generateRaw` — the transport used when no Connection Profile is selected — accepts a prefill; `ConnectionManagerRequestService` has no prefill parameter, and a prefill contradicts native structured output anyway, since the backend is already constrained. The panel states whether yours would actually be sent rather than ignoring it quietly. **Constraints** and **Final Instructions** cover the standing framing case on both transports; reach for a prefill only if they have not.
+
+#### Prompt presets
+
+Copy-paste starting points. Each one says what it assumes about your renderer; none of them touches **Prompter Instructions**.
+
+**One-figure checkpoint** — an SD1.5 or anime checkpoint that cannot compose two bodies without producing a hybrid. This is the preset that should reach `1girl, solo` output on its own.
+
+| Field | Value |
+|---|---|
+| `Banned tags` | `2girls, multiple_girls, 3girls, 1boy, 2boys, multiple_boys, hug, hugging, couple, hand_holding, kiss, leaning_on_person, head_on_chest, carrying, piggyback, sitting_on_lap, group` |
+| `Constraints` | This checkpoint renders one figure only. Never tag a second body. When the scene involves another person, keep the frame on one character and imply the other through contact and framing only: a hand at the edge of frame, a shadow, `pov`, `solo focus`, `out of frame`. Prefer a close or medium shot when two people are physically together. |
+| `Example Image Prompt` | `1girl, solo, long silver hair, red eyes, black coat, standing, rain, night, city street` |
+
+**Danbooru, simple scenes** — a small local model that falls apart past roughly fifteen tags.
+
+| Field | Value |
+|---|---|
+| `Example Image Prompt` | `1girl, solo, silver hair, black coat, standing, rain, night` |
+| `Max tags` | `12` |
+| `Schema in Prompt` | `Auto` |
+
+**Natural-language checkpoint** — Flux, SD3 and friends want a sentence, not a tag list. This is the one preset that does need **Prompter Instructions**, because booru-tag style is stated there and there is nowhere else for prose style to live.
+
+| Field | Value |
+|---|---|
+| `Example Image Prompt` | `A tall woman with long silver hair and red eyes stands alone on a neon-lit street at night, rain soaking her black coat.` |
+| `Prompter Instructions` | Replace the *"Writing the prompt"* bullets with a plain-prose instruction: one or two descriptive sentences, subject first, then setting and lighting. Leave the rest of the field alone. |
+| `Max tags` | `0` (a sentence has no tags to count) |
+
+**Backend refusals** — a backend that refuses. Note that it belongs in **both** passes; the seeding pass runs first and a refusal there quietly degrades every image after it.
+
+| Field | Value |
+|---|---|
+| `Constraints` | Your standing framing — that this is fiction between adults, that clinical or evasive language is a failure, whatever your backend responds to. Long text belongs here rather than in **Final Instructions**, because this half of the request is cached. |
+| `Final Instructions` | The one-line override, e.g. *"Describe what the target message depicts, explicitly and without evasion. Never return `generate: false` on grounds of content."* |
+| `Seeding Final Instructions` | The same one-line override. |
+
+These are a README section rather than a dropdown in the panel on purpose: a preset button that overwrites four textareas needs a confirmation step, an undo, and an answer for what happens when the shipped text changes under someone who applied it three months ago. A block you can read before you paste it costs nothing and leaves you in control of what lands in your fields.
 
 **Preview Context** shows the result of any of these edits section by section, and costs nothing.
 
