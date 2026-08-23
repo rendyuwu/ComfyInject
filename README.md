@@ -2,9 +2,14 @@
 
 # ComfyInject
 
-A SillyTavern extension that automatically generates images from `[[IMG: ... ]]` markers in bot messages using your local ComfyUI instance.
+A SillyTavern extension that automatically generates images inside your chat using your local ComfyUI instance.
 
-When your LLM outputs a marker, ComfyInject intercepts it, sends the prompt to ComfyUI, and replaces the marker with the generated image, all without leaving the chat. Multiple images per message are supported. Images are saved permanently into the chat history and survive page reloads. By default each image is also copied into SillyTavern's own image storage, so chats keep loading even when ComfyUI is switched off. Outbound prompts sent to the LLM replace injected images with a compact token so the model maintains visual continuity across the conversation.
+There are two ways to trigger a generation, chosen with **Trigger Mode** in the settings:
+
+- **Marker mode** (the default, and the original behaviour) — your roleplay model writes a `[[IMG: ... ]]` marker into its message. ComfyInject intercepts it, sends the prompt to ComfyUI, and replaces the marker with the generated image.
+- **Dedicated mode** — a second, separate LLM call reads the chat, decides on its own whether the moment is worth illustrating, and returns a structured image prompt. The roleplay model is never asked to emit markers at all. See [Dedicated Prompter](#dedicated-prompter).
+
+Everything after the prompt is shared by both modes. Multiple images per message are supported. Images are saved permanently into the chat history and survive page reloads. By default each image is also copied into SillyTavern's own image storage, so chats keep loading even when ComfyUI is switched off. Outbound prompts sent to the LLM replace injected images with a compact text token so the model keeps visual continuity across the conversation.
 
 <details>
   <summary>Table of Contents</summary>
@@ -16,12 +21,22 @@ When your LLM outputs a marker, ComfyInject intercepts it, sends the prompt to C
         <li><a href="#step-1--install-the-extension">Step 1 — Install the extension</a></li>
         <li><a href="#step-2--enable-the-cors-header-in-comfyui">Step 2 — Enable the CORS header in ComfyUI</a></li>
         <li><a href="#step-3--configure-the-extension">Step 3 — Configure the extension</a></li>
-        <li><a href="#step-4--set-up-your-llm">Step 4 — Set up your LLM</a></li>
+        <li><a href="#step-4--choose-how-generations-are-triggered">Step 4 — Choose how generations are triggered</a></li>
       </ul>
     </li>
     <li><a href="#configuration">Configuration</a></li>
     <li><a href="#marker-format">Marker Format</a></li>
     <li><a href="#system-prompt">System Prompt</a></li>
+    <li>
+      <a href="#dedicated-prompter">Dedicated Prompter</a>
+      <ul>
+        <li><a href="#turning-it-on">Turning it on</a></li>
+        <li><a href="#what-the-prompter-sees">What the prompter sees</a></li>
+        <li><a href="#appearance-registry">Appearance Registry</a></li>
+        <li><a href="#the-three-tool-buttons">The three tool buttons</a></li>
+        <li><a href="#both-mode">Both mode</a></li>
+      </ul>
+    </li>
     <li><a href="#image-gallery">Image Gallery</a></li>
     <li><a href="#retry-button">Retry Button</a></li>
     <li><a href="#local-image-saving">Local Image Saving</a></li>
@@ -110,12 +125,14 @@ All other settings have sensible defaults and don't need to be changed to get st
 
 ---
 
-### Step 4 — Set up your LLM
+### Step 4 — Choose how generations are triggered
 
-ComfyInject won't generate anything unless your LLM knows to output the `[[IMG: ... ]]` marker format.
+**Marker mode (the default).** ComfyInject won't generate anything unless your LLM knows to output the `[[IMG: ... ]]` marker format.
 
 - **To get up and running fast:** copy the ready-made prompt from the [System Prompt](#system-prompt) section and paste it into your character's Post-History Instructions (Author's Note in ST).
 - **To write your own:** see the [Marker Format](#marker-format) section for the recommended format and parser behavior.
+
+**Dedicated mode.** Nothing goes into your Post-History Instructions at all — in fact the marker instruction block should be removed. Instead, open the **Dedicated Prompter** panel in the extension settings, set **Trigger Mode** to *Dedicated*, and pick a **Connection Profile** for the prompter to use. See [Dedicated Prompter](#dedicated-prompter).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -123,7 +140,7 @@ ComfyInject won't generate anything unless your LLM knows to output the `[[IMG: 
 
 ## Configuration
 
-All settings are available in the Extensions panel in SillyTavern under **ComfyInject**. The required settings and the image storage options are visible immediately. Everything else is under **Advanced Settings**.
+All settings are available in the Extensions panel in SillyTavern under **ComfyInject**. The required settings and the image storage options are visible immediately. The prompter settings are under **Dedicated Prompter**, and everything else is under **Advanced Settings**.
 
 ### Connection & Model
 
@@ -144,6 +161,29 @@ These options sit directly under the Checkpoint and Workflow fields — they are
 | `Max dimension` | Longest edge in pixels after downscaling. Images already smaller are re-encoded but never enlarged. Default: 1280. |
 | `Quality` | WebP quality, 1-100. Default: 82. |
 | `Delete images when their chat is deleted` | Delete a chat's saved images when the chat itself is deleted. Images another chat still shows are always kept. Default: on. |
+
+### Dedicated Prompter Settings
+
+Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#dedicated-prompter) for what the mode actually does.
+
+| Setting | Description |
+|---|---|
+| `Trigger Mode` | `Marker` (default), `Dedicated`, or `Both`. Marker mode is byte-identical to the behaviour before this feature existed. |
+| `Connection Profile` | Which SillyTavern Connection Profile the prompter calls. ComfyInject stores the profile id only — model, endpoint and API key stay in SillyTavern. With nothing selected, the currently active main API is used instead. |
+| `Preset Override` | Optional completion preset for the prompter call only. Empty = use the profile's own preset. The override is always restored afterwards, so your profile is never left modified. |
+| `Structured Output` | `Native` asks the backend to enforce the JSON schema. `Prompt-engineered` describes the schema in the prompt instead. Native falls back to prompt-engineered on its own if the backend refuses. |
+| `Max Tokens` | Response budget for the prompter call. Default: 1024. Reasoning models may need more — a reply that runs out of budget mid-thought produces no image. |
+| `Timeout (ms)` | Hard timeout per prompter call. Default: 60000. |
+| `Run automatically on new messages` | Fire the prompter on every character message. Default: on. With it off, only the per-message wand button and the tool buttons run it. |
+| `Max images per message` | Hard cap applied after validation, whatever the model returns. Default: 1. |
+| `Use the appearance registry` | Send the per-chat appearance registry to the prompter. Default: on. See [Appearance Registry](#appearance-registry). |
+| `Seed the registry automatically` | Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards and every bound lorebook. Default: on. |
+| `Debug logging` | Log the assembled prompt and the raw response to the browser console. Default: off. |
+| `History messages` | How many messages before the target message the prompter sees. Default: 12. |
+| `Include character card` / `user persona` / `author's note` / `running summary` | Which context sections to send. Card, persona and summary default to on; author's note defaults to off. |
+| `World Info` | `Activated entries only` (default) or `Off`. Entries are read in dry-run mode, so the main chat's sticky, cooldown and recursion state is never touched. |
+| `Max chars` | Character cap on the World Info section. Default: 4000. |
+| `Prompter Instructions` | The prompter's system prompt, with a **Restore default** button. Your edits are never overwritten on update. |
 
 ### Prompt Control
 
@@ -195,6 +235,8 @@ To reset all advanced settings back to defaults while keeping your host, checkpo
 ---
 
 ## Marker Format
+
+> Applies to **Marker** and **Both** mode. In **Dedicated** mode markers are not a trigger at all — see [Dedicated Prompter](#dedicated-prompter).
 
 The recommended marker format is:
 
@@ -265,6 +307,10 @@ To change these tags, open the Extensions panel → ComfyInject → **Advanced S
 
 ## System Prompt
 
+> **Marker mode only.** This whole section — the instruction block below included — exists to teach your roleplay model the marker format. In **Dedicated** mode nothing here applies: the prompter is a separate call with its own instructions, and the roleplay model is never asked for a marker. If you switch to Dedicated mode, **delete this block from your Post-History Instructions.** It is a permanent instruction riding along on every single request to your main model, so removing it is both a token saving and a prose-quality win.
+>
+> In **Both** mode, keep it.
+
 Add the following to your **Post-History Instructions** (You can also place it in **Author's Note**, **Prompt Content**, or even in your **Summary** if that's what you want!). Placing it there puts it closer to the end of the context window, which gives significantly better format compliance than a top-level system prompt.
 
 The example below tells the LLM to include one image per message. You can change the number to whatever you want, or tell it to include images "when narratively appropriate" for more flexibility.
@@ -315,6 +361,103 @@ Never explain or mention the marker in narration.
 ```
 
 > **Model recommendations:** Larger models (70B+) or cloud APIs like DeepSeek V3.2 follow the format far more reliably than small local models. Models under 13B tend to produce inconsistent markers and hallucinate character details. However, with update v0.3.0, many of the previously rejected markers from smaller models will now parse correctly and produce an image regardless. 
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Dedicated Prompter
+
+Marker mode asks your roleplay model to do four jobs at once on top of writing prose: decide *whether* a moment deserves an image, decide the framing, translate narrative into booru tags, and keep a character's appearance consistent across images. The third job actively fights the first: a model that has just been told to write keyword lists tends to bleed keyword-listing style back into its prose.
+
+Dedicated mode moves all four jobs to a second LLM call. That call reads the chat, returns a validated JSON object, and never writes prose. Your roleplay model goes back to only writing prose, and the marker instruction block comes out of your Post-History Instructions entirely.
+
+The prompter returns exactly this:
+
+| Field | Meaning |
+|---|---|
+| `generate` | Whether this message is worth illustrating at all. |
+| `reason` | One short clause explaining the decision. Visible in debug logging and in Test Prompter — this is what you read when the prompter's judgement looks wrong. |
+| `images[].prompt` | Booru-style comma-separated tags. |
+| `images[].ar` | One of `PORTRAIT`, `SQUARE`, `LANDSCAPE`, `CINEMA`. |
+| `images[].shot` | One of `CLOSE`, `MEDIUM`, `WIDE`, `DUTCH`, `OVERHEAD`, `LOWANGLE`, `HIGHANGLE`, `PROFILE`, `BACKVIEW`, `POV`. |
+| `images[].characters` | Who the prompter believed it was drawing. Used to grow the [Appearance Registry](#appearance-registry); never sent to ComfyUI. |
+
+There is no seed field. Seeds stay the extension's business, so **Lock Seed** keeps working exactly as it does in marker mode.
+
+`generate: false` is a normal, quiet outcome — no image, no error, no toast. Turn on **Debug logging** if you want to see the reason for every skip.
+
+Everything downstream of the prompt is the shared path: the same `<img>` tag, the same retry button, the same gallery, the same local saving, the same cleanup on chat deletion. Generated images are appended at the end of the message.
+
+### Turning it on
+
+1. Open **Dedicated Prompter** in the extension settings.
+2. Set **Trigger Mode** to *Dedicated*.
+3. Pick a **Connection Profile**. Only Chat Completion and Text Completion profiles can be selected — those are the only two SillyTavern's Connection Manager supports. With nothing selected, ComfyInject falls back to your currently active main API.
+4. Delete the marker instruction block from your Post-History Instructions.
+
+ComfyInject never stores a credential. It stores a profile id; the model, endpoint and API key stay in SillyTavern's own Connection Profile.
+
+**Structured output.** With **Native** selected, the schema is handed to SillyTavern, which translates it per backend — a `response_format` on OpenAI-style sources, a tool call on Claude, a response schema on Google. If the backend refuses it, ComfyInject retries the same request in prompt-engineered mode and remembers the refusal, so it does not spend a rejected request every message from then on. Text Completion profiles have no server-side equivalent and go straight to prompt-engineered mode.
+
+Structured output also survives the no-profile case: SillyTavern's raw generation path accepts a schema too, so falling back to your main API does not cost you schema enforcement. What it does cost is abort — that path cannot be cancelled mid-request, so no Stop control is offered on it.
+
+A reply that fails to parse is a **skip**, not a repair target. The marker path's salvage cascade exists because a prose model writes malformed markers; there is nothing to salvage here, and pretending otherwise would re-add the exact failure surface this mode removes.
+
+### What the prompter sees
+
+One system message, assembled in this order:
+
+1. **TASK** — your **Prompter Instructions**.
+2. **APPEARANCE REGISTRY** — the per-chat appearance cache.
+3. **SESSION** — chat id, character or group name, persona name.
+4. **CHARACTER CARD** — description, personality, scenario and depth prompt, macro-resolved, with chat-level overrides honoured. First messages and example dialogue are deliberately left out: they cost tokens and teach prose style the prompter must not imitate.
+5. **USER PERSONA**
+6. **AUTHOR NOTE** — off by default.
+7. **RUNNING SUMMARY** — whatever the Summarize extension last wrote. This is what keeps a long chat legible past the history window.
+8. **WORLD INFO**
+9. **RECENT HISTORY** — the last N messages, with the scope stated in the section header so the model knows what it is missing.
+10. **TARGET MESSAGE** — the message being illustrated.
+11. **OUTPUT RULES** — the schema and the hard constraints, last.
+
+Two things worth knowing about how that context is read:
+
+- **World Info is read in dry-run mode.** Sticky, cooldown and recursion state in your main chat is never touched, and no `WORLD_INFO_ACTIVATED` event is emitted. The prompter can see your lorebook without disturbing the roleplay's own lore rotation.
+- **ComfyInject's own output is stripped out.** Every `<img>` tag and every `[[IMG: ...]]` marker is removed from the history and from the target message before the prompter sees them, so the prompter never learns to imitate its own past output.
+
+### Appearance Registry
+
+The hardest of the four jobs is consistency: keeping the same character's hair, eyes and outfit stable across images generated an hour apart. Marker mode cannot really do this — the model only ever sees its own previous prompt text echoed back.
+
+Dedicated mode keeps a small per-chat registry, stored in chat metadata:
+
+| Source badge | Where the entry came from |
+|---|---|
+| `seed` | The seeding pass: one extra LLM call, the first time the prompter runs in a chat, which reads the character cards and every bound lorebook (character, group members, chat, persona, and your globally selected books) and extracts stable appearance tags per character. Bound books are read in full, not scanned for activation — an appearance entry that is not currently triggering still describes the character. |
+| `grown` | Distilled from a generated image's own prompt. This is the brand-new-NPC case: someone introduced two messages ago has no card and no lorebook entry, but by their second image they have a stable entry. Growth only fires on single-character images — with two characters in one prompt there is no way to tell whose hair is whose. Camera, pose, expression, setting, lighting and quality tags are filtered out, so `rain, night, city street` never freezes into who someone *is*. |
+| `user` | You edited it by hand. **`user` entries are never overwritten by seeding or growth.** A bad automatic entry is fixable by hand instead of by re-rolling the model. |
+
+The registry is per-chat, not global: the same character can legitimately look different in a different chat after an outfit change, a timeskip, or an AU. It is capped at 40 entries and 400 characters each, because it is injected into every request.
+
+`grown` entries are a heuristic and are labelled as one — that is exactly why the source badge exists. If one is wrong, fix it in the registry editor and it becomes a `user` entry that nothing will touch again.
+
+**Overlap with Prepend Prompt.** [Prompt Control](#prompt-control)'s **Prepend Prompt** is added to *every* prompt unconditionally. The registry is per-character and selected by the prompter. They compose, so don't put the same appearance tags in both.
+
+### The three tool buttons
+
+At the bottom of the Dedicated Prompter panel:
+
+- **Preview Context** — shows exactly what would be sent, section by section, with character counts, a total token count, and which transport would be used. Costs nothing and calls nothing. This is where to look first when the prompter's output is surprising: usually the answer is that a section you assumed was there is empty.
+- **Test Prompter** — runs one real request against the current chat's last message and shows the raw reply, the validated result, and any validation notes. **No image is generated.**
+- **Appearance Registry** — the editor. Per-row edit and delete, add by hand, seed on demand, clear all. Editing a row flips its badge to `user`.
+
+Every bot message also gets a small wand button in its button row for running the prompter on that message by hand. That one is the only way to trigger anything when **Run automatically on new messages** is off.
+
+### Both mode
+
+Markers win. The marker path runs first, and the prompter stands down on any message that already got an image from it. A message with no marker falls through to the prompter, which is the useful case: a model that emits markers unreliably gets covered rather than replaced.
+
+Keep the marker instruction block in your Post-History Instructions in this mode, and note that outgoing images are still rewritten as `[[IMG: prompt | seed ]]` so the marker format stays reinforced.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -399,15 +542,27 @@ To use your own workflow, see `workflows/README.md` for placeholder requirements
 
 ## How It Works
 
+Steps 1 and 2 depend on the trigger mode. Everything from step 3 on is shared.
+
+**Marker mode:**
+
 1. Bot message arrives containing one or more `[[IMG: ... ]]` markers
 2. ComfyInject parses each marker, salvages misplaced control tokens when possible, applies built-in fallbacks for missing fields, and resolves seeds while applying any active locks
-3. For each marker, the workflow is filled with your settings and sent to ComfyUI sequentially
+
+**Dedicated mode:**
+
+1. Bot message arrives. On the first message of a chat the appearance registry is seeded from the character cards and every bound lorebook
+2. One LLM call is assembled from the context sections and sent to the prompter's Connection Profile. The reply is parsed, validated and clamped; `generate: false` stops here. Any character the reply names who is not in the registry yet is added to it
+
+**Both modes, from here on:**
+
+3. For each image, the workflow is filled with your settings and submitted to ComfyUI through a single serial queue, so two messages arriving quickly cannot collide
 4. ComfyInject polls `/history` until each image is ready
 5. The finished image is downloaded from ComfyUI, downscaled to WebP, and uploaded into SillyTavern's own image storage, so the message can point at a local copy instead of hotlinking ComfyUI. On any failure it falls back to the ComfyUI URL
-6. Each marker is replaced with an `<img>` tag in the chat permanently
-7. Image metadata (AR, shot, prompt ID, filename, effective settings, and repair metadata) is saved to chat metadata keyed by message timestamp for stability across deletions
+6. The image becomes an `<img>` tag in the chat permanently — replacing the marker in marker mode, appended at the end of the message in dedicated mode
+7. Image metadata (AR, shot, prompt ID, filename, effective settings, and either repair metadata or the prompter's reason and character list) is saved to chat metadata keyed by message timestamp for stability across deletions
 8. The saved image is recorded against the current chat so it can be cleaned up if that chat is ever deleted
-9. On the next generation, the outbound interceptor replaces `<img>` tags with `[[IMG: prompt | seed ]]` tokens so the LLM sees a compact text reference instead of raw HTML
+9. On the next generation, the outbound interceptor replaces `<img>` tags with a compact text reference instead of raw HTML — `[[IMG: prompt | seed ]]` in marker and both mode, so the format stays reinforced, and a neutral `[image: prompt]` in dedicated mode, where teaching the main model marker syntax would be counterproductive. Quiet generations (summaries and other extensions' background calls) are left alone in every mode
 10. Retry buttons are injected via DOM manipulation after each render
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -420,6 +575,10 @@ To use your own workflow, see `workflows/README.md` for placeholder requirements
 - The generating placeholder may not appear on some versions of SillyTavern. This is a cosmetic limitation with no impact on functionality.
 - Deleted messages leave orphaned image files in ComfyUI's output folder. ComfyInject does not delete these files — manage your ComfyUI output folder as needed. Cleanup on chat deletion only covers the copies saved inside SillyTavern.
 - Images generated before local saving existed were never recorded, so deleting those chats will not clean them up. See [Local Image Saving](#local-image-saving).
+- **Dedicated mode** costs one extra LLM call per message it decides to illustrate, plus one more the first time it runs in a chat if registry seeding is on. Skipped messages still cost the deciding call.
+- **Dedicated mode** appends its image at the end of the message rather than at the narratively right point inside it. Marker mode can place an image mid-message; the prompter cannot yet.
+- Only Chat Completion and Text Completion Connection Profiles can be selected for the prompter — those are the only two SillyTavern's Connection Manager supports.
+- The gallery's repair badge and Repair Info section are marker-mode concepts. Dedicated-path images never carry them, because there is nothing to repair.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -451,7 +610,19 @@ That means you can clear ComfyUI's `output/` folder without breaking your chats.
 
 ST's built in image generation builds the prompt itself from the chat context — the LLM has no awareness of the image at all. It also requires a Chat Completion API with function calling enabled, so text completion users can't use it.
 
-With ComfyInject the LLM writes the image prompt directly into its response, controls the framing and seed, and can reference its own previous images for visual continuity via the outbound interceptor. It works with any backend and any LLM that can follow structured output instructions.
+In **marker mode** the roleplay LLM writes the image prompt directly into its response, controls the framing and seed, and can reference its own previous images for visual continuity via the outbound interceptor. It works with any backend and any LLM that can follow structured output instructions.
+
+In **dedicated mode** the prompt is written by a second LLM call, which is closer to what ST's built-in does — but with three differences that matter: the prompt goes through your ComfyUI workflow rather than ST's own image pipeline, the decision of *whether* to illustrate is made by a model reading the scene rather than by you pressing a button, and the [Appearance Registry](#appearance-registry) pins each character's appearance across the whole chat instead of re-deriving it every time. Function calling is not required, and text completion backends work.
+
+---
+
+### Which trigger mode should I use?
+
+**Dedicated**, if your main model is small, if its marker compliance is unreliable, if you dislike what marker instructions do to its prose, or if character appearance drifts between images. It costs an extra LLM call per illustrated message and buys back a shorter main prompt.
+
+**Marker**, if your main model follows the format well, you want images placed mid-message rather than at the end, or you would rather not spend a second call.
+
+**Both** is the hedge: markers when the model emits them, the prompter when it doesn't.
 
 ---
 
