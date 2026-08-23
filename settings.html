@@ -243,7 +243,7 @@
                     usually cheaper as well as better.
                 </small>
 
-                <label class="checkbox_label" for="comfyinject_prompter_debug" title="Log the assembled prompt and the raw response to the browser console.">
+                <label class="checkbox_label" for="comfyinject_prompter_debug" title="Log the whole prompter round trip to the browser console: both prompt blocks, their sizes, whether the cacheable block changed, the raw reply, and the validated directive.">
                     <input id="comfyinject_prompter_debug" type="checkbox" />
                     <span>Debug logging</span>
                 </label>
@@ -305,7 +305,11 @@
                             <span>Restore default</span>
                         </div>
                     </div>
-                    <small>Rendered as the <b>TASK</b> section, first. Role and framing.</small>
+                    <small>
+                        Rendered as the <b>TASK</b> section, first. Role and framing. There is one shipped
+                        default per <b>Generate Policy</b>; <b>Restore default</b> writes whichever matches the
+                        policy you are on.
+                    </small>
                 </div>
 
                 <div style="margin-top: 8px;">
@@ -328,9 +332,11 @@
                     <label for="comfyinject_prompter_final_instructions">Final Instructions</label>
                     <textarea id="comfyinject_prompter_final_instructions" class="text_pole" rows="5"></textarea>
                     <small>
-                        Rendered as the <b>last</b> section, after <b>OUTPUT RULES</b>. Left out entirely when
-                        empty. This is the recency-strong slot: a rule stated here is the last thing the model
-                        reads, so it beats a contradicting rule in <b>Prompter Instructions</b>.
+                        Rendered as the <b>last</b> section of the request, after the target message. Left out
+                        entirely when empty. This is the recency-strong slot: a rule stated here is the last
+                        thing the model reads before the ask, so it beats a contradicting rule in
+                        <b>Prompter Instructions</b>. The seeding pass has its own — a standing framing usually belongs
+                        in both.
                     </small>
                 </div>
 
@@ -346,7 +352,10 @@
                             <span>Restore default</span>
                         </div>
                     </div>
-                    <small>The whole prompt is one system message; this is the user message that asks for the reply.</small>
+                    <small>
+                        The ask, appended at the end of the request's user message — after the target message and
+                        <b>Final Instructions</b>. Emptying it falls back to the shipped default.
+                    </small>
                 </div>
 
                 <div style="margin-top: 8px;">

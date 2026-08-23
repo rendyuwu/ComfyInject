@@ -240,9 +240,18 @@ async function buildWorldInfoSection(settings, targetIndex) {
 function historyWindowStart(total, count, stride) {
     const earliest = Math.max(0, total - count);
     if (stride <= 0) return earliest;
+
+    // A stride wider than the window cannot buy a longer hold — the window would
+    // have to jump every `count` messages regardless — and left unclamped it can
+    // push the anchor past the end of the chat and render no history at all.
+    const step = Math.min(stride, count);
+
     // Ceil, not floor: the anchor has to be at or after the earliest start the
-    // count allows, or the window would grow past prompter_history_count.
-    return Math.min(total, Math.ceil(earliest / stride) * stride);
+    // count allows, or the window would grow past prompter_history_count. The
+    // result therefore lands in [earliest, earliest + step - 1], so the window is
+    // between count - step + 1 and count messages long — the price of holding it
+    // still, and the reason a stride near the count is a poor choice.
+    return Math.ceil(earliest / step) * step;
 }
 
 /**

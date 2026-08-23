@@ -172,25 +172,31 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Connection Profile` | Which SillyTavern Connection Profile the prompter calls. ComfyInject stores the profile id only — model, endpoint and API key stay in SillyTavern. With nothing selected, the currently active main API is used instead. |
 | `Preset Override` | Optional completion preset for the prompter call only. Empty = use the profile's own preset. The override is always restored afterwards, so your profile is never left modified. |
 | `Structured Output` | `Native` asks the backend to enforce the JSON schema. `Prompt-engineered` describes the schema in the prompt instead. Native falls back to prompt-engineered on its own if the backend refuses. |
+| `Schema in Prompt` | `Always` (default) restates the ~1,900-character schema JSON in **OUTPUT RULES** on every request. `Auto` leaves it out while the backend is enforcing the schema itself, and rebuilds the request with it if the backend refuses mid-flight. The prose rules and the worked example are always sent. See [Tuning the prompter](#tuning-the-prompter). |
 | `Max Tokens` | Response budget for the prompter call. Default: 1024. Reasoning models may need more — a reply that runs out of budget mid-thought produces no image. |
 | `Timeout (ms)` | Hard timeout per prompter call. Default: 60000. |
 | `Run automatically on new messages` | Fire the prompter on every character message. Default: on. With it off, only the per-message wand button and the tool buttons run it. |
+| `Generate Policy` | `Always` (default) illustrates every character message: the prompter only decides *what* to draw. `Judge` lets it decide whether the moment deserves an image at all. User messages never produce an image either way. See [Generate policy](#generate-policy). |
 | `Max images per message` | Hard cap applied after validation, whatever the model returns. Default: 1. |
 | `Max tags` | Hard cap on comma-separated tags per image prompt, truncated at a comma so a tag is never cut in half. `0` (default) turns it off. Enforced after the reply comes back rather than asked for in the prompt. It bounds only what the prompter writes — **Prepend Prompt**, the shot tag and **Append Prompt** are added afterwards and are not counted. |
 | `Use the appearance registry` | Send the per-chat appearance registry to the prompter. Default: on. See [Appearance Registry](#appearance-registry). |
 | `Seed the registry automatically` | Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards and every bound lorebook. Default: on. |
+| `Registry Scope` | `All` (default) sends every registry entry. `Present` sends only the character card's own cast plus anyone named in the target message or the history window. See [Appearance Registry](#appearance-registry) for the cost. |
 | `Debug logging` | Log the whole prompter round trip to the browser console: the assembled prompt in full and its per-section sizes, the request shape, the raw reply, and the validated directive with any corrections applied to it. Also turns the skip decision into a toast, so you can see the prompter deciding not to draw. Default: off. |
-| `History messages` | How many messages before the target message the prompter sees. Default: 12. |
+| `History messages` | How many messages before the target message the prompter sees. Default: 6. This is the largest changing part of every request, so it is the biggest single lever on cost. |
+| `Anchor stride` | Hold the history window's start still for this many messages at a time instead of sliding it by one every turn, so the rendered history is append-only between jumps. `0` (default) slides. Only useful on a backend that caches prompt prefixes — see [Prompt caching](#prompt-caching). A stride close to `History messages` makes the window's length vary a lot; half of it or less is a reasonable choice. |
 | `Include character card` / `user persona` / `author's note` / `running summary` | Which context sections to send. Card, persona and summary default to on; author's note defaults to off. |
 | `World Info` | `Activated entries only` (default) or `Off`. Entries are read in dry-run mode, so the main chat's sticky, cooldown and recursion state is never touched. |
 | `Max chars` | Character cap on the World Info section. Default: 4000. |
-| `Prompter Instructions` | The prompter's system prompt, rendered as the **TASK** section, first. Role and framing. |
+| `Prompter Instructions` | The prompter's system prompt, rendered as the **TASK** section, first. Role and framing. There is one shipped default per **Generate Policy**, and switching the policy carries an untouched field over to the matching text while leaving an edited one alone. |
 | `Example Image Prompt` | The `prompt` string inside the worked example in **OUTPUT RULES**. See [Tuning the prompter](#tuning-the-prompter) — this is the field to change for a checkpoint that can only draw simple scenes. |
-| `Final Instructions` | Free text rendered as the **last** section, after **OUTPUT RULES**. Empty by default, and left out entirely when empty. |
-| `User Turn` | The user message that asks for the reply. The whole assembled prompt is one system message; chat-completion backends still want something to answer. |
+| `Final Instructions` | Free text rendered as the **last** section of the request, after the target message. Empty by default, and left out entirely when empty. |
+| `User Turn` | The ask, appended at the end of the request's user message. |
 | `Assistant Prefill` | Assistant prefill text. Only applies when no Connection Profile is selected, and only to requests that are not schema-constrained. The panel says which of those you are currently in. Empty by default. |
 | `Seeding Instructions` | The appearance registry's seeding pass has its own job, so it has its own system prompt. |
 | `Seeding Example Tags` | The example registry entry in the seeding pass's own **OUTPUT RULES**. |
+| `Seeding Final Instructions` | The seeding pass's own **last** section, empty by default and left out entirely when empty. Deliberately separate from **Final Instructions**: see [Tuning the prompter](#tuning-the-prompter). |
+| `Seeding User Turn` | The user message that asks the seeding pass for its reply. Emptying it falls back to the shipped default rather than to **User Turn**, which asks for something else entirely. |
 
 Every prompt field above has a **Restore default** button that restores only that field. Your edits are never overwritten on update, and they all survive **Reset Advanced Settings**.
 
@@ -396,7 +402,7 @@ The prompter returns exactly this:
 
 | Field | Meaning |
 |---|---|
-| `generate` | Whether this message is worth illustrating at all. |
+| `generate` | Whether this message is worth illustrating at all. Near-vestigial under **Generate Policy** `Always`, which is the default — see [Generate policy](#generate-policy). |
 | `reason` | One short clause explaining the decision. Visible in debug logging and in Test Prompter — this is what you read when the prompter's judgement looks wrong. |
 | `images[].prompt` | Booru-style comma-separated tags. |
 | `images[].ar` | One of `PORTRAIT`, `SQUARE`, `LANDSCAPE`, `CINEMA`. |
@@ -405,7 +411,7 @@ The prompter returns exactly this:
 
 There is no seed field. Seeds stay the extension's business, so **Lock Seed** keeps working exactly as it does in marker mode.
 
-`generate: false` is a normal, quiet outcome — no image, no error, no toast. Turn on **Debug logging** if you want to see the reason for every skip.
+A skip is a normal, quiet outcome — no image, no error, no toast. Turn on **Debug logging** if you want to see the reason for every one. Under the default **Generate Policy** of `Always` a skip only happens when the reply carried no usable image at all.
 
 Everything downstream of the prompt is the shared path: the same `<img>` tag, the same retry button, the same gallery, the same local saving, the same cleanup on chat deletion. Generated images are appended at the end of the message.
 
@@ -426,25 +432,79 @@ A reply that fails to parse is a **skip**, not a repair target. The marker path'
 
 ### What the prompter sees
 
-One system message, assembled in this order:
+Two messages. The split is on the static/volatile line, which is a cost decision as much as a stylistic one — see [Prompt caching](#prompt-caching).
+
+**`messages[0]`, the system message.** Everything that does not change from one character message to the next:
 
 1. **TASK** — your **Prompter Instructions**.
-2. **APPEARANCE REGISTRY** — the per-chat appearance cache.
+2. **APPEARANCE REGISTRY** — the per-chat appearance cache. Moves to the volatile message when **Registry Scope** is `Present`.
 3. **SESSION** — chat id, character or group name, persona name.
 4. **CHARACTER CARD** — description, personality, scenario and depth prompt, macro-resolved, with chat-level overrides honoured. First messages and example dialogue are deliberately left out: they cost tokens and teach prose style the prompter must not imitate.
 5. **USER PERSONA**
 6. **AUTHOR NOTE** — off by default.
-7. **RUNNING SUMMARY** — whatever the Summarize extension last wrote. This is what keeps a long chat legible past the history window.
-8. **WORLD INFO**
-9. **RECENT HISTORY** — the last N messages, with the scope stated in the section header so the model knows what it is missing.
-10. **TARGET MESSAGE** — the message being illustrated.
-11. **OUTPUT RULES** — the schema and the hard constraints.
-12. **FINAL INSTRUCTIONS** — your **Final Instructions**, last. Omitted entirely when empty.
+7. **OUTPUT RULES** — the schema and the hard constraints.
 
-Two things worth knowing about how that context is read:
+**`messages[1]`, the user message.** Everything that changes every turn:
+
+8. **RUNNING SUMMARY** — whatever the Summarize extension last wrote. This is what keeps a long chat legible past the history window.
+9. **WORLD INFO**
+10. **RECENT HISTORY** — the last N messages, with the scope stated in the section header so the model knows what it is missing.
+11. **TARGET MESSAGE** — the message being illustrated.
+12. **FINAL INSTRUCTIONS** — your **Final Instructions**. Omitted entirely when empty.
+13. **User Turn** — the ask, appended plainly at the end.
+
+The ordering rule is unchanged: reference data first, standing orders last, and **Final Instructions** is still the last thing the model reads before the ask.
+
+Four things worth knowing about how that context is read:
 
 - **World Info is read in dry-run mode.** Sticky, cooldown and recursion state in your main chat is never touched, and no `WORLD_INFO_ACTIVATED` event is emitted. The prompter can see your lorebook without disturbing the roleplay's own lore rotation.
 - **ComfyInject's own output is stripped out.** Every `<img>` tag and every `[[IMG: ...]]` marker is removed from the history and from the target message before the prompter sees them, so the prompter never learns to imitate its own past output.
+- **Macros are resolved in everything you typed.** `{{char}}`, `{{user}}` and the rest of SillyTavern's macro set expand in every prompter field, in **Prepend Prompt** and **Append Prompt**, in appearance registry tags, and in group member cards. See [Macros in prompter fields](#macros-in-prompter-fields).
+- **Macros are *not* resolved a second time in the roleplay's own text.** World info, history and the target message arrive already resolved by SillyTavern, so braces a character wrote in dialogue survive verbatim.
+
+### Generate policy
+
+**Generate Policy** decides whether the prompter is a judge or only a director.
+
+- **Always** (default) — every character message gets an image. The prompter is told so, and its `generate` boolean stops being able to veto a usable image. This is the illustrated-log reading: one picture per reply, as a visual record of the scene.
+- **Judge** — the prompter decides whether the moment deserves an image and skips dialogue that shows nothing new. This is the behaviour that shipped first, kept verbatim.
+
+Two things are true under both policies. User messages never produce an image — only the character-message event runs the prompter. And a reply with no usable image at all is still a skip: there is nothing to draw, and inventing something is worse than missing one.
+
+Worth saying plainly before turning **Always** on with **Run automatically on new messages**: that is one ComfyUI submission per character message. The serial queue keeps them from colliding, but it does not make them fast, and near-duplicate consecutive images — the thing **Judge** avoids — become yours to want or not want.
+
+Switching the policy also switches which text **Restore default** writes into **Prompter Instructions**. An untouched field is carried over for you; an edited one is left alone with a note, because silently rewriting a prompt you wrote is exactly the upgrade failure the **Restore default** buttons exist to prevent.
+
+### Macros in prompter fields
+
+`{{char}}`, `{{user}}`, `{{persona}}`, `{{time}}`, `{{random:a,b}}` — the full SillyTavern macro set — expand at request time in every field you can type into:
+
+**Prompter Instructions**, **Example Image Prompt**, **Final Instructions**, **User Turn**, **Seeding Instructions**, **Seeding Example Tags**, **Seeding Final Instructions**, **Seeding User Turn**, **Prepend Prompt**, **Append Prompt**, and appearance registry tags.
+
+Two footguns:
+
+- **`{{char}}` in a group chat resolves to the active speaker**, which is SillyTavern's own behaviour and not what "the character" usually means in a whole-cast prompt. Check what it resolves to in **Preview Context** before relying on it.
+- **Re-rolling macros re-roll every request.** `{{random:a,b}}`, `{{pick}}`, `{{roll}}` and `{{time}}` are a genuine feature for prompt variety and a genuine surprise if you expected a fixed instruction. One of them inside the system message also destroys the cached prefix on every request — see [Prompt caching](#prompt-caching).
+
+Expansion happens at request time, not when you save the field, so an edited field is never frozen to whatever the macros meant when you typed it.
+
+### Prompt caching
+
+Only relevant on a backend that caches prompt prefixes — a Claude profile with SillyTavern's `claude.enableSystemPromptCache` on is the case this was designed against. Everyone else can skip this section; nothing here costs anything if you ignore it.
+
+SillyTavern marks the **last block of the system prompt** as cacheable, and `cachingAtDepth` additionally marks the last non-assistant message. A cache write costs more than a plain input token (roughly 2× with `extendedTTL`, 1.25× without); a cache read costs about a tenth. So a system message that changes every request is worse than no caching at all — it pays the write premium and never gets the read back.
+
+That is why the request is split the way it is. The system message holds only what stays the same between turns, so on the second character message in a chat it is a cache read rather than a write. What keeps it stable, and what breaks it:
+
+| Keeps the prefix stable | Breaks it |
+|---|---|
+| `Registry Scope: All` | `Registry Scope: Present` — the registry then depends on the target message and moves to the volatile message |
+| Fixed text in the prompter fields | `{{random}}`, `{{roll}}`, `{{time}}` in a system-message field |
+| — | Discovering a new NPC, which rewrites the registry once and then settles |
+
+**`History messages` is the biggest lever, not the caching.** The volatile message is charged at full price every turn whatever the layout does, and history is most of it. Lowering it from 12 to 6 saves more than anything else on this list; the default is 6 for that reason. **Anchor stride** is a second-order win on top: it holds the window's start still so the volatile text is append-only between jumps.
+
+Turn on **Debug logging** to check any of this. It reports both block sizes and whether the system message was byte-identical to the previous request's in this chat.
 
 ### Tuning the prompter
 
@@ -466,9 +526,14 @@ The example teaches the shape; **Max tags** enforces it whatever the model does 
 
 If a rule is not being followed, move it from the first field to the second before rewording it.
 
-Two more things worth knowing:
+**The seeding pass is a separate call**, with the same refusal risk and none of the directive pass's fields applied to it. It gets the same four slots of its own: **Seeding Instructions**, **Seeding Example Tags**, **Seeding Final Instructions** and **Seeding User Turn**.
 
-- **The seeding pass is a separate call** with the same refusal risk and none of the above applied to it. It has its own **Seeding Instructions** and **Seeding Example Tags**. If registry entries come back empty or refused while per-message prompts work fine, that is the pass to look at.
+They are deliberately not shared with the directive pass's, because the two ask different questions — generation policy is meaningless to a pass whose whole job is extracting stable appearance tags. The practical consequence: **a standing framing usually belongs in both.** The seeding call runs first, once per chat, before the first image; if it is refused the registry stays empty, and an empty registry degrades every image after it. That failure is quiet — per-message prompts keep working, the pictures just stop agreeing with each other. If registry entries come back empty while the prompter is otherwise fine, that is the pass to look at.
+
+**Your prompter model is small and local.** Beyond the example and the tag cap, turn **Schema in Prompt** to `Auto`. The schema JSON is about 1,900 characters, and while the backend is enforcing the schema server-side those characters are pure noise competing with your instructions — worst on exactly the models that follow instructions least well. On `Auto` it is left out while native enforcement is active and the request is rebuilt with it if the backend refuses, so nothing is lost either way. The default is `Always` only because it is what shipped.
+
+One more thing:
+
 - **Assistant Prefill** is the narrowest field here. `generateRaw` — the transport used when no Connection Profile is selected — accepts a prefill; `ConnectionManagerRequestService` has no prefill parameter, and a prefill contradicts native structured output anyway, since the backend is already constrained. The panel states whether yours would actually be sent rather than ignoring it quietly. **Prompter Instructions** and **Final Instructions** cover the standing framing case on both transports; reach for a prefill only if they have not.
 
 **Preview Context** shows the result of any of these edits section by section, and costs nothing.
@@ -487,6 +552,10 @@ Dedicated mode keeps a small per-chat registry, stored in chat metadata:
 
 The registry is per-chat, not global: the same character can legitimately look different in a different chat after an outfit change, a timeskip, or an AU. It is capped at 40 entries and 400 characters each, because it is injected into every request.
 
+**Registry Scope** decides how much of it goes out each time. `All` (default) sends every entry. `Present` sends only the character card's own cast — always, whether or not they are named — plus anyone whose name appears in the target message or the history window, matched on word boundaries so `Ana` does not ride along with `Anastasia`.
+
+`Present` is for a long chat that has accumulated dozens of walk-on NPCs. The cost is real and is the reason it is not the default: someone referred to only as "the innkeeper" or by a pronoun is dropped, and their next image may contradict their last. It also moves the registry into the changing half of the request, so on a backend that caches prompt prefixes `All` is usually cheaper *as well as* better — see [Prompt caching](#prompt-caching).
+
 `grown` entries are a heuristic and are labelled as one — that is exactly why the source badge exists. If one is wrong, fix it in the registry editor and it becomes a `user` entry that nothing will touch again.
 
 **Overlap with Prepend Prompt.** [Prompt Control](#prompt-control)'s **Prepend Prompt** is added to *every* prompt unconditionally. The registry is per-character and selected by the prompter. They compose, so don't put the same appearance tags in both.
@@ -495,7 +564,7 @@ The registry is per-chat, not global: the same character can legitimately look d
 
 At the bottom of the Dedicated Prompter panel:
 
-- **Preview Context** — shows exactly what would be sent, section by section, with character counts, a total token count, and which transport would be used. Costs nothing and calls nothing. This is where to look first when the prompter's output is surprising: usually the answer is that a section you assumed was there is empty.
+- **Preview Context** — shows exactly what would be sent, split into the stable system message and the volatile user message, section by section, with character counts per block, a total token count, and which transport would be used. Costs nothing and calls nothing. This is where to look first when the prompter's output is surprising: usually the answer is that a section you assumed was there is empty.
 - **Test Prompter** — runs one real request against the current chat's last message and shows the raw reply, the validated result, and any validation notes. **No image is generated.**
 - **Appearance Registry** — the editor. Per-row edit and delete, add by hand, seed on demand, clear all. Editing a row flips its badge to `user`.
 
