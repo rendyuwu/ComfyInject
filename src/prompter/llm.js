@@ -163,12 +163,14 @@ function profileSupportsNativeSchema(service, profileId) {
  * The json_schema payload core expects: `{name, value, strict, returnInvalid}`.
  * `returnInvalid` keeps an unparsable reply as a string instead of collapsing it
  * to `{}`, which is the difference between a diagnosable failure and a silent one.
+ * @param {object} schema
+ * @param {string} name
  * @returns {object}
  */
-function buildJsonSchemaPayload() {
+function buildJsonSchemaPayload(schema, name) {
     return {
-        name: SCHEMA_NAME,
-        value: toStrictJsonSchema(DIRECTIVE_SCHEMA),
+        name,
+        value: toStrictJsonSchema(schema),
         strict: true,
         returnInvalid: true,
     };
@@ -219,7 +221,7 @@ function raceTimeout(promise, timeoutMs) {
  * Sends via a Connection Profile.
  * @returns {Promise<{payload: string | object, structured: "native" | "json"}>}
  */
-async function sendViaProfile({ messages, profileId, wantNative, signal, timeoutMs, maxTokens }) {
+async function sendViaProfile({ messages, profileId, wantNative, signal, timeoutMs, maxTokens, schema, schemaName }) {
     const service = ctx().ConnectionManagerRequestService;
     const settings = getSettings();
 
@@ -240,7 +242,7 @@ async function sendViaProfile({ messages, profileId, wantNative, signal, timeout
     const { signal: composed, cleanup } = withTimeout(signal, timeoutMs);
 
     const send = async (useNative) => {
-        const overridePayload = useNative ? { json_schema: buildJsonSchemaPayload() } : {};
+        const overridePayload = useNative ? { json_schema: buildJsonSchemaPayload(schema, schemaName) } : {};
         debugLog("profile request", {
             profileId,
             api: profile.api,
@@ -285,7 +287,7 @@ async function sendViaProfile({ messages, profileId, wantNative, signal, timeout
  * prompt-engineered output.
  * @returns {Promise<{payload: string | object, structured: "native" | "json"}>}
  */
-async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens }) {
+async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, schema, schemaName }) {
     const { generateRaw } = ctx();
     if (typeof generateRaw !== "function") {
         throw new Error("generateRaw is not available in this SillyTavern build.");
@@ -297,7 +299,7 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens }
     const send = async (useNative) => {
         const options = { prompt: messages, responseLength: maxTokens };
         if (useNative) {
-            options.jsonSchema = buildJsonSchemaPayload();
+            options.jsonSchema = buildJsonSchemaPayload(schema, schemaName);
         } else {
             // Without a schema the reply goes through cleanUpMessage, whose name
             // trimming discards a whole response that happens to open with a
@@ -324,28 +326,45 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens }
 /**
  * Runs one prompter request.
  *
+ * The schema is a parameter rather than a constant because the dedicated path
+ * makes two different kinds of call over the same transport: the per-message
+ * image directive, and the appearance registry seeding pass.
+ *
  * @param {object} params
  * @param {string} params.systemPrompt - Output of buildPrompterContext()
  * @param {AbortSignal | null} [params.signal]
+ * @param {object} [params.schema] - JSON schema to enforce natively
+ * @param {string} [params.schemaName] - Name some providers surface in errors
+ * @param {string} [params.userTurn] - The user message that asks for the reply
+ * @param {number | null} [params.maxTokens] - Overrides the configured budget
  * @returns {Promise<{payload: string | object, transport: string, structured: string, transportReason: string}>}
  */
-export async function runPrompter({ systemPrompt, signal = null }) {
+export async function runPrompter({
+    systemPrompt,
+    signal = null,
+    schema = DIRECTIVE_SCHEMA,
+    schemaName = SCHEMA_NAME,
+    userTurn = USER_TURN,
+    maxTokens = null,
+}) {
     const settings = getSettings();
-    const maxTokens = Math.max(64, Number(settings.prompter_max_tokens) || 1024);
+    const budget = Number(maxTokens) || Number(settings.prompter_max_tokens) || 1024;
+    const resolvedMaxTokens = Math.max(64, budget);
     const timeoutMs = Math.max(1000, Number(settings.prompter_timeout_ms) || 60000);
     const wantNative = settings.prompter_structured_mode !== "json";
 
     const messages = [
         { role: "system", content: systemPrompt },
-        { role: "user", content: USER_TURN },
+        { role: "user", content: userTurn },
     ];
 
     const { transport, profileId, reason } = getTransportInfo();
     if (reason) debugLog("transport", transport, reason);
 
+    const request = { messages, wantNative, timeoutMs, maxTokens: resolvedMaxTokens, schema, schemaName };
     const result = transport === "profile"
-        ? await sendViaProfile({ messages, profileId, wantNative, signal, timeoutMs, maxTokens })
-        : await sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens });
+        ? await sendViaProfile({ ...request, profileId, signal })
+        : await sendViaGenerateRaw(request);
 
     debugLog("raw response", result.payload);
 

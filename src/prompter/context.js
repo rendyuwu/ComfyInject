@@ -7,12 +7,10 @@
 // SillyTavern degrades to a smaller prompt instead of throwing.
 
 import { MODULE_NAME } from "../../settings.js";
+import { buildAppearanceSection } from "./appearance.js";
 import { debugLog } from "./log.js";
 import { renderOutputRules } from "./schema.js";
-
-// Where the per-chat appearance registry lives. The registry itself is written
-// by a later phase; reading it here is all this module needs to do.
-export const APPEARANCE_METADATA_KEY = "comfyinject_appearance";
+import { ensureCardsLoaded, getGroupName, listCastMembers, renderSections } from "./sources.js";
 
 // Image markers and already-generated <img> tags are stripped from anything the
 // prompter sees. Leaving them in teaches it to imitate the marker syntax it is
@@ -58,23 +56,6 @@ function stripImages(text) {
 }
 
 /**
- * Character cards are metadata-only ("shallow") right after a page load, so
- * reading them before unshallowing yields empty strings.
- */
-async function ensureCardsLoaded() {
-    const context = ctx();
-    try {
-        if (context.groupId) {
-            await context.unshallowGroupMembers?.(context.groupId);
-        } else if (context.characterId !== undefined && context.characterId !== null) {
-            await context.unshallowCharacter?.(context.characterId);
-        }
-    } catch (err) {
-        debugLog("unshallow failed", err);
-    }
-}
-
-/**
  * Picks the message to illustrate: the requested index, or the newest visible
  * non-empty message.
  * @param {any[]} chat
@@ -102,37 +83,12 @@ function buildTaskSection(settings) {
     return body ? [{ title: "TASK", body }] : [];
 }
 
-/**
- * The per-chat appearance registry, injected early because it is reference data
- * rather than instruction.
- * @returns {Section[]}
- */
-function buildAppearanceSection(settings) {
-    if (!settings.prompter_appearance_enabled) return [];
-
-    const registry = ctx().chatMetadata?.[APPEARANCE_METADATA_KEY];
-    if (!registry || typeof registry !== "object") return [];
-
-    const lines = [];
-    for (const entry of Object.values(registry)) {
-        const tags = trim(entry?.tags);
-        const name = trim(entry?.name);
-        if (tags && name) lines.push(`${name}: ${tags}`);
-    }
-    if (!lines.length) return [];
-
-    return [{
-        title: "APPEARANCE REGISTRY (use these tags verbatim for these characters)",
-        body: lines.join("\n"),
-    }];
-}
-
 /** @returns {Section[]} */
 function buildSessionSection() {
     const context = ctx();
-    const characterName = context.groupId
-        ? (context.groups?.find((/** @type {any} */ g) => g.id === context.groupId)?.name || "Group")
-        : (context.characters?.[context.characterId]?.name || "(no character)");
+    const characterName = getGroupName()
+        || context.characters?.[context.characterId]?.name
+        || "(no character)";
 
     return [{
         title: "SESSION",
@@ -151,27 +107,14 @@ function buildSessionSection() {
  * @returns {Section[]}
  */
 function buildSoloCardSection() {
-    const context = ctx();
-    const character = context.characters?.[context.characterId];
-    if (!character) return [];
+    const [member] = listCastMembers();
+    if (!member) return [];
 
-    let fields = {};
-    try {
-        fields = context.getCharacterCardFields?.() || {};
-    } catch (err) {
-        debugLog("getCharacterCardFields failed, falling back to the raw card", err);
-    }
-
-    const parts = [`Name: ${character.name || "Character"}`];
-    const description = trim(fields.description) || trim(character.description);
-    const personality = trim(fields.personality) || trim(character.personality);
-    const scenario = trim(fields.scenario) || trim(character.scenario);
-    const depthPrompt = trim(fields.charDepthPrompt);
-
-    if (description) parts.push(`### Description\n${description}`);
-    if (personality) parts.push(`### Personality\n${personality}`);
-    if (scenario) parts.push(`### Scenario\n${scenario}`);
-    if (depthPrompt) parts.push(`### Always-on note (depth prompt)\n${depthPrompt}`);
+    const parts = [`Name: ${member.name}`];
+    if (member.description) parts.push(`### Description\n${member.description}`);
+    if (member.personality) parts.push(`### Personality\n${member.personality}`);
+    if (member.scenario) parts.push(`### Scenario\n${member.scenario}`);
+    if (member.depthPrompt) parts.push(`### Always-on note (depth prompt)\n${member.depthPrompt}`);
 
     return [{ title: "CHARACTER CARD", body: parts.join("\n\n") }];
 }
@@ -183,24 +126,18 @@ function buildSoloCardSection() {
  * @returns {Section[]}
  */
 function buildGroupCardSection() {
-    const context = ctx();
-    const group = context.groups?.find((/** @type {any} */ g) => g.id === context.groupId);
-    if (!group) return [];
-
-    const members = (group.members || [])
-        .map((/** @type {string} */ avatar) => context.characters?.find((/** @type {any} */ c) => c.avatar === avatar))
-        .filter(Boolean);
+    const members = listCastMembers();
     if (!members.length) return [];
 
-    const blocks = members.map((/** @type {any} */ member) => {
+    const blocks = members.map(member => {
         const parts = [`### ${member.name}`];
-        if (trim(member.description)) parts.push(trim(member.description));
-        if (trim(member.personality)) parts.push(`Personality: ${trim(member.personality)}`);
+        if (member.description) parts.push(member.description);
+        if (member.personality) parts.push(`Personality: ${member.personality}`);
         return parts.join("\n");
     });
 
     return [{
-        title: `GROUP CAST — ${group.name || "Group"} (${members.length} members)`,
+        title: `GROUP CAST — ${getGroupName() || "Group"} (${members.length} members)`,
         body: blocks.join("\n\n"),
     }];
 }
@@ -307,16 +244,7 @@ function buildHistorySection(settings, targetIndex) {
     }];
 }
 
-/**
- * Render sections into the delimited form the model sees.
- * @param {Section[]} sections
- * @returns {string}
- */
-export function renderSections(sections) {
-    return sections
-        .map(section => `--- ${section.title} ---\n${section.body}\n--- END ${section.title} ---`)
-        .join("\n\n");
-}
+export { renderSections };
 
 /**
  * Builds the prompter's full system prompt.

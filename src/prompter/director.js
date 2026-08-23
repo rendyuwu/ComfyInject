@@ -31,6 +31,7 @@ import {
     renderMessageWithSuffix,
     rerenderMessage,
 } from "../dom.js";
+import { ensureRegistrySeeded, growRegistry, resetAppearanceState } from "./appearance.js";
 import { buildPrompterContext } from "./context.js";
 import { getErrorChain, isTimeoutError, runPrompter } from "./llm.js";
 import { parseDirective, validateDirective } from "./schema.js";
@@ -96,6 +97,12 @@ async function runDirector(messageIndex, { manual }) {
     const signal = controller.signal;
 
     try {
+        // One extra call on the first dedicated run in a chat, and never again.
+        // It is deliberately inside the in-flight window and before the context
+        // is built, so the very first image already has the registry to work from.
+        await ensureRegistrySeeded({ signal });
+        if (signal.aborted) return;
+
         let built;
         try {
             built = await buildPrompterContext({ messageIndex });
@@ -150,6 +157,11 @@ async function runDirector(messageIndex, { manual }) {
         }
 
         debugLog("decision: generate", { messageIndex, images: validated.images.length, reason: validated.reason });
+
+        // Grow the registry from the prompter's own belief about who it drew,
+        // before generation rather than after: a ComfyUI failure should not cost
+        // us a newly discovered character.
+        growRegistry(validated.images);
 
         await generateAndAppend({
             sendDate,
@@ -295,6 +307,7 @@ function onChatChanged() {
         controller = null;
     }
     inFlight = false;
+    resetAppearanceState();
     scheduleDirectButtons();
 }
 

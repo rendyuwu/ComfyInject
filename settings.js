@@ -115,8 +115,6 @@ export const defaultSettings = Object.freeze({
     // "marker"    = the main roleplay model emits [[IMG: ...]] markers (the original behaviour)
     // "dedicated" = a separate LLM call reads the chat and decides
     // "both"      = markers first, dedicated prompter as a fallback
-    // Only "marker" is wired to generation right now; the dedicated path is
-    // built up phase by phase and currently stops at the settings-panel tools.
     trigger_mode: "marker",
 
     // --- Dedicated Prompter ---
@@ -157,8 +155,15 @@ export const defaultSettings = Object.freeze({
 
     prompter_system_prompt: DEFAULT_PROMPTER_SYSTEM_PROMPT,
 
-    // Include the per-chat appearance registry in the prompter's context.
+    // Include the per-chat appearance registry in the prompter's context, so the
+    // same character keeps the same hair, eyes and outfit across images.
     prompter_appearance_enabled: true,
+
+    // Spend one extra LLM call on the first dedicated run in a chat, reading the
+    // character cards and every bound lorebook to fill the registry. With this
+    // off the registry still grows from generated images and can still be
+    // seeded by hand from the registry editor.
+    prompter_appearance_autoseed: true,
 
     // Log the assembled prompt and the raw response to the console.
     prompter_debug: false,
