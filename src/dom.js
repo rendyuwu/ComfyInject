@@ -2,10 +2,8 @@ import { MARKER_REGEX, processAllImageMarkers, hasImageMarker } from "./parse.js
 import { generateImage } from "./comfy.js";
 import { saveLastSeed, getImageData } from "./state.js";
 import { notifyFailure, notifyRepair, notifyWarning, repairToastsEnabled } from "./notify.js";
+import { countImageTags, parseImageTags, replaceImageTags } from "./imgtag.js";
 import { MODULE_NAME } from "../settings.js";
-
-// Matches every already-injected ComfyInject image in a message's text.
-const IMG_TAG_REGEX_GLOBAL = /<img class="comfyinject-image"[^>]*>/g;
 
 /**
  * Builds the <img> tag string that gets injected into the message.
@@ -28,7 +26,7 @@ export function buildImgTag(imageUrl, prompt, seed) {
  * @returns {number}
  */
 export function countComfyImages(text) {
-    return (String(text ?? "").match(IMG_TAG_REGEX_GLOBAL) || []).length;
+    return countImageTags(text);
 }
 
 /**
@@ -544,11 +542,10 @@ async function retryImage(sendDate, imgIndex) {
     if (!message || !metadata) return;
 
     // Parse prompt from the img tag in mes (source of truth, not stored in metadata)
-    const imgTags = [...message.mes.matchAll(/<img class="comfyinject-image"[^>]*>/g)];
-    const targetTag = imgTags[imgIndex];
+    const targetTag = parseImageTags(message.mes)[imgIndex];
     if (!targetTag) return;
 
-    const prompt = targetTag[0].match(/data-prompt="([^"]*)"/)?.[1]?.replace(/&quot;/g, '"') || "";
+    const prompt = targetTag.prompt;
     if (!prompt) return;
 
     // Look up metadata for supplementary fields (ar, shot)
@@ -642,15 +639,7 @@ async function retryImage(sendDate, imgIndex) {
 
     // Replace the Nth img tag in mes (where N = imgIndex)
     const newImgTag = buildImgTag(imageUrl, prompt, effectiveSeed);
-    let count = 0;
-    message.mes = message.mes.replace(/<img class="comfyinject-image"[^>]*>/g, (match) => {
-        if (count === imgIndex) {
-            count++;
-            return newImgTag;
-        }
-        count++;
-        return match;
-    });
+    message.mes = replaceImageTags(message.mes, (tag, n) => (n === imgIndex ? newImgTag : tag.tag));
 
     // Re-render
     try {

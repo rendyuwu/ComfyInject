@@ -1,11 +1,5 @@
 import { MODULE_NAME } from "../settings.js";
-
-// Regex to find injected comfyinject <img> tags in message text
-const IMG_TAG_REGEX = /<img class="comfyinject-image"[^>]*>/g;
-
-// Regexes to extract data attributes from individual img tags
-const PROMPT_REGEX = /data-prompt="([^"]*)"/;
-const SEED_REGEX = /data-seed="([^"]*)"/;
+import { replaceImageTags } from "./imgtag.js";
 
 /**
  * Returns the current trigger mode, defaulting to "marker" so that a missing
@@ -27,7 +21,7 @@ function getTriggerMode() {
  * for visual continuity.
  *
  * @param {string} prompt - The prompt read from data-prompt
- * @param {string} seed - The seed read from data-seed
+ * @param {number} seed - The seed read from data-seed, or 0 when none was recorded
  * @returns {string}
  */
 function toMarkerToken(prompt, seed) {
@@ -83,21 +77,17 @@ globalThis.comfyInjectInterceptor = async function(chat, contextSize, abort, typ
     for (let i = 0; i < chat.length; i++) {
         const message = chat[i];
 
-        // Only process bot messages that contain an img tag
+        // Only process bot messages
         if (message.is_user) continue;
-        if (!message.mes || !IMG_TAG_REGEX.test(message.mes)) continue;
+        if (!message.mes) continue;
 
-        // Reset regex lastIndex since we're reusing it across iterations
-        IMG_TAG_REGEX.lastIndex = 0;
-
-        // Replace each img tag with a compact token parsed from its data attributes
-        message.mes = message.mes.replace(IMG_TAG_REGEX, (tag) => {
-            const prompt = tag.match(PROMPT_REGEX)?.[1]?.replace(/&quot;/g, '"') || "";
-            const seed = tag.match(SEED_REGEX)?.[1] || "0";
-
+        // Replace each img tag with a compact token read from its data attributes.
+        // A message with no tags comes back byte-identical, so there is nothing to
+        // pre-check — and no shared regex lastIndex to leak between iterations.
+        message.mes = replaceImageTags(message.mes, ({ prompt, seed }) => {
             if (!prompt) return "[image]";
 
-            return dedicatedOnly ? toNeutralTag(prompt) : toMarkerToken(prompt, seed);
+            return dedicatedOnly ? toNeutralTag(prompt) : toMarkerToken(prompt, seed ?? 0);
         });
     }
 };

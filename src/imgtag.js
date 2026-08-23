@@ -24,6 +24,26 @@ const SEED_REGEX = /data-seed="([^"]*)"/;
  */
 
 /**
+ * The per-tag read, shared by the reader and the rewriter so the two can never
+ * disagree about what a tag says.
+ * @param {string} tag
+ * @returns {ImageTag}
+ */
+function parseOne(tag) {
+    const seed = parseInt(tag.match(SEED_REGEX)?.[1], 10);
+
+    return {
+        tag,
+        url: tag.match(SRC_REGEX)?.[1] || null,
+        // buildImgTag() writes `"` as `&quot;` (dom.js); this reverses it.
+        prompt: tag.match(PROMPT_REGEX)?.[1]?.replace(/&quot;/g, '"') || "",
+        // null rather than NaN, so a caller can tell "no seed recorded" from
+        // "seed 0".
+        seed: Number.isFinite(seed) ? seed : null,
+    };
+}
+
+/**
  * Every ComfyInject image in a message's text, in the order it appears.
  *
  * Order is load-bearing: retryImage() and the gallery both map a metadata entry
@@ -40,17 +60,7 @@ export function parseImageTags(mes) {
     const text = String(mes ?? "");
     if (!text) return [];
 
-    return [...text.matchAll(IMG_TAG_REGEX)].map((match) => {
-        const tag = match[0];
-        const seed = parseInt(tag.match(SEED_REGEX)?.[1], 10);
-
-        return {
-            tag,
-            url: tag.match(SRC_REGEX)?.[1] || null,
-            prompt: tag.match(PROMPT_REGEX)?.[1]?.replace(/&quot;/g, '"') || "",
-            seed: Number.isFinite(seed) ? seed : null,
-        };
-    });
+    return [...text.matchAll(IMG_TAG_REGEX)].map(match => parseOne(match[0]));
 }
 
 /**
@@ -60,4 +70,28 @@ export function parseImageTags(mes) {
  */
 export function countImageTags(mes) {
     return parseImageTags(mes).length;
+}
+
+/**
+ * Rewrites every ComfyInject image in a message's text.
+ *
+ * The replacer sees the same parsed shape parseImageTags returns, plus the tag's
+ * position, and returns the text to put in its place. Returning the tag itself
+ * leaves it alone, which is how a positional rewrite — replace the Nth image and
+ * nothing else — is expressed without a second regex.
+ *
+ * The regex lives here and only here: the whole point of this module is that a
+ * caller never writes `/<img class="comfyinject-image"[^>]*>/` again, whether it
+ * is reading or writing.
+ *
+ * @param {any} mes
+ * @param {(parsed: ImageTag, index: number) => string} replacer
+ * @returns {string}
+ */
+export function replaceImageTags(mes, replacer) {
+    const text = String(mes ?? "");
+    if (!text) return text;
+
+    let index = 0;
+    return text.replace(IMG_TAG_REGEX, tag => replacer(parseOne(tag), index++));
 }

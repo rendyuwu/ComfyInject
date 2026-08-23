@@ -7,7 +7,7 @@
 // SillyTavern degrades to a smaller prompt instead of throwing.
 
 import { MODULE_NAME } from "../../settings.js";
-import { parseImageTags } from "../imgtag.js";
+import { parseImageTags, replaceImageTags } from "../imgtag.js";
 import { substituteTrimmed } from "../macros.js";
 import { getImageData } from "../state.js";
 import { appearanceSectionIsVolatile, buildAppearanceSection } from "./appearance.js";
@@ -17,12 +17,10 @@ import { renderOutputRules } from "./schema.js";
 import { ensureCardsLoaded, getGroupName, listCastMembers, renderSections } from "./sources.js";
 import { parseTagList, stripBannedTags } from "./tags.js";
 
-// Image markers and already-generated <img> tags are stripped from anything the
-// prompter sees. Leaving them in teaches it to imitate the marker syntax it is
-// meant to replace, and burns tokens on base64-free but very long tag soup.
-// SillyTavern's sanitizer prefixes the class with "custom-" in the rendered DOM
-// while `mes` keeps the bare class, so both are matched.
-const IMG_TAG_REGEX = /<img class="(?:custom-)?comfyinject-image"[^>]*>/g;
+// Image markers are stripped from anything the prompter sees, along with the
+// <img> tags themselves (via replaceImageTags). Leaving them in teaches it to
+// imitate the marker syntax it is meant to replace, and burns tokens on
+// base64-free but very long tag soup.
 const MARKER_REGEX = /\[\[IMG:\s*(.+?)\s*\]\]/gs;
 
 /**
@@ -55,8 +53,7 @@ function trim(value) {
  * @returns {string}
  */
 function stripImages(text) {
-    return String(text ?? "")
-        .replace(IMG_TAG_REGEX, "")
+    return replaceImageTags(text, () => "")
         .replace(MARKER_REGEX, "")
         .trim();
 }

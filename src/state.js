@@ -2,6 +2,7 @@
 // If no seed has been used yet and LOCK is requested, we fall back to RANDOM.
 
 import { MODULE_NAME } from "../settings.js";
+import { parseImageTags } from "./imgtag.js";
 
 let lastSeed = null;
 
@@ -29,16 +30,9 @@ export function getImageData(metadata, key) {
 function getSeedFromMessageMes(message) {
     if (!message?.mes || typeof message.mes !== "string") return null;
 
-    const imgTags = [...message.mes.matchAll(/<img class="comfyinject-image"[^>]*>/g)];
-    if (imgTags.length === 0) return null;
-
-    for (let i = imgTags.length - 1; i >= 0; i--) {
-        const tag = imgTags[i][0];
-        const seedMatch = tag.match(/data-seed="([^"]*)"/);
-        const parsedSeed = parseInt(seedMatch?.[1], 10);
-        if (Number.isFinite(parsedSeed)) {
-            return parsedSeed;
-        }
+    const tags = parseImageTags(message.mes);
+    for (let i = tags.length - 1; i >= 0; i--) {
+        if (tags[i].seed !== null) return tags[i].seed;
     }
 
     return null;

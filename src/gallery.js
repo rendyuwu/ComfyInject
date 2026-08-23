@@ -1,4 +1,5 @@
 import { MODULE_NAME } from "../settings.js";
+import { parseImageTags } from "./imgtag.js";
 import { getImageData } from "./state.js";
 
 /**
@@ -35,26 +36,21 @@ export function openGallery() {
     // Metadata is used as supplementary info for extra fields like ar, shot,
     // promptId, and parser repair metadata.
     const allImages = [];
-    const imgTagRegex = /<img class="comfyinject-image"[^>]*>/g;
-    const srcRegex = /src="([^"]*)"/;
-    const promptRegex = /data-prompt="([^"]*)"/;
-    const seedRegex = /data-seed="([^"]*)"/;
 
     for (let i = 0; i < context.chat.length; i++) {
         const message = context.chat[i];
         if (!message?.mes) continue;
 
-        const imgTags = [...message.mes.matchAll(imgTagRegex)];
+        const imgTags = parseImageTags(message.mes);
         if (imgTags.length === 0) continue;
 
         const sendDateImages = message.send_date ? getImageData(metadata, message.send_date) : [];
         const metaImages = sendDateImages.length > 0 ? sendDateImages : getImageData(metadata, i);
 
-        imgTags.forEach((match, imgIndex) => {
-            const tag = match[0];
-            const imageUrl = tag.match(srcRegex)?.[1] || null;
-            const prompt = tag.match(promptRegex)?.[1]?.replace(/&quot;/g, '"') || "";
-            const seed = parseInt(tag.match(seedRegex)?.[1], 10) || 0;
+        imgTags.forEach((tag, imgIndex) => {
+            const imageUrl = tag.url;
+            const prompt = tag.prompt;
+            const seed = tag.seed ?? 0;
 
             // Metadata is supplementary — only use it for extra fields
             // like ar, shot, promptId, effective settings, and repair metadata.
