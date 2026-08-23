@@ -92,6 +92,166 @@
 
             <hr class="sysHR" />
 
+            <!-- Dedicated Prompter Toggle -->
+            <div class="flex-container flexGap5">
+                <div id="comfyinject_prompter_toggle" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span>Dedicated Prompter</span>
+                </div>
+            </div>
+
+            <!-- Dedicated Prompter Block (hidden by default) -->
+            <div id="comfyinject_prompter_block" style="display:none;">
+
+                <small>
+                    A separate LLM call reads the chat and writes the image prompt, so the
+                    roleplay model never has to emit <code>[[IMG: ...]]</code> markers.
+                </small>
+
+                <!-- Trigger Mode -->
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 8px;">
+                    <label for="comfyinject_trigger_mode">Trigger Mode</label>
+                    <select id="comfyinject_trigger_mode" class="text_pole">
+                        <option value="marker">Marker — the roleplay model emits markers</option>
+                        <option value="dedicated">Dedicated — a separate LLM call decides</option>
+                        <option value="both">Both — markers first, prompter as fallback</option>
+                    </select>
+                </div>
+                <small>
+                    Only <b>Marker</b> currently generates images. The dedicated path is wired up to
+                    the tools at the bottom of this block; automatic generation lands with the next
+                    piece of it.
+                </small>
+
+                <hr class="sysHR" />
+
+                <!-- Connection -->
+                <div class="flex-container flexGap5 alignItemsCenter">
+                    <label for="comfyinject_prompter_profile_id">Connection Profile</label>
+                    <select id="comfyinject_prompter_profile_id" class="text_pole">
+                        <!-- Populated by ui.js -->
+                    </select>
+                </div>
+                <small id="comfyinject_prompter_profile_note">
+                    ComfyInject stores the profile id only — the model, endpoint and API key stay in
+                    SillyTavern. With no profile selected, the currently active main API is used instead.
+                </small>
+
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_preset">Preset Override</label>
+                    <select id="comfyinject_prompter_preset" class="text_pole">
+                        <!-- Populated by ui.js -->
+                    </select>
+                </div>
+
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_structured_mode">Structured Output</label>
+                    <select id="comfyinject_prompter_structured_mode" class="text_pole">
+                        <option value="native">Native — the backend enforces the schema</option>
+                        <option value="json">Prompt-engineered — schema described in the prompt</option>
+                    </select>
+                </div>
+                <small>Native falls back to prompt-engineered on its own if the backend refuses a schema.</small>
+
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_max_tokens" style="width: 110px;">Max Tokens</label>
+                    <input id="comfyinject_prompter_max_tokens" type="number" class="text_pole" min="64" max="8192" step="64" style="width: 90px;" />
+                    <label for="comfyinject_prompter_timeout_ms" style="width: 90px;">Timeout (ms)</label>
+                    <input id="comfyinject_prompter_timeout_ms" type="number" class="text_pole" min="1000" max="600000" step="1000" style="width: 100px;" />
+                </div>
+
+                <hr class="sysHR" />
+
+                <!-- Behaviour -->
+                <label class="checkbox_label" for="comfyinject_prompter_auto" title="Run the prompter automatically on every character message. When off, only the manual tools run it.">
+                    <input id="comfyinject_prompter_auto" type="checkbox" />
+                    <span>Run automatically on new messages</span>
+                </label>
+
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_max_images_per_message" style="width: 150px;">Max images per message</label>
+                    <input id="comfyinject_prompter_max_images_per_message" type="number" class="text_pole" min="1" max="4" step="1" style="width: 70px;" />
+                </div>
+
+                <label class="checkbox_label" for="comfyinject_prompter_appearance_enabled" title="Send the per-chat appearance registry to the prompter so characters keep the same hair, eyes and outfit across images.">
+                    <input id="comfyinject_prompter_appearance_enabled" type="checkbox" />
+                    <span>Use the appearance registry</span>
+                </label>
+
+                <label class="checkbox_label" for="comfyinject_prompter_debug" title="Log the assembled prompt and the raw response to the browser console.">
+                    <input id="comfyinject_prompter_debug" type="checkbox" />
+                    <span>Debug logging</span>
+                </label>
+
+                <hr class="sysHR" />
+
+                <!-- Context -->
+                <div class="flex-container flexGap5 alignItemsCenter">
+                    <label for="comfyinject_prompter_history_count" style="width: 150px;">History messages</label>
+                    <input id="comfyinject_prompter_history_count" type="number" class="text_pole" min="0" max="100" step="1" style="width: 70px;" />
+                </div>
+                <small>How many messages before the target message the prompter sees.</small>
+
+                <label class="checkbox_label" for="comfyinject_prompter_include_card">
+                    <input id="comfyinject_prompter_include_card" type="checkbox" />
+                    <span>Include character card</span>
+                </label>
+                <label class="checkbox_label" for="comfyinject_prompter_include_persona">
+                    <input id="comfyinject_prompter_include_persona" type="checkbox" />
+                    <span>Include user persona</span>
+                </label>
+                <label class="checkbox_label" for="comfyinject_prompter_include_author_note">
+                    <input id="comfyinject_prompter_include_author_note" type="checkbox" />
+                    <span>Include author's note</span>
+                </label>
+                <label class="checkbox_label" for="comfyinject_prompter_include_summary">
+                    <input id="comfyinject_prompter_include_summary" type="checkbox" />
+                    <span>Include running summary</span>
+                </label>
+
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_lore_mode" style="width: 110px;">World Info</label>
+                    <select id="comfyinject_prompter_lore_mode" class="text_pole" style="width: 150px;">
+                        <option value="activated">Activated entries only</option>
+                        <option value="off">Off</option>
+                    </select>
+                    <label for="comfyinject_prompter_lore_max_chars" style="width: 90px;">Max chars</label>
+                    <input id="comfyinject_prompter_lore_max_chars" type="number" class="text_pole" min="500" max="40000" step="500" style="width: 90px;" />
+                </div>
+                <small>Entries are read in dry-run mode, so the main chat's sticky, cooldown and recursion state is never touched.</small>
+
+                <hr class="sysHR" />
+
+                <!-- System Prompt -->
+                <div>
+                    <label for="comfyinject_prompter_system_prompt">Prompter Instructions</label>
+                    <textarea id="comfyinject_prompter_system_prompt" class="text_pole" rows="10"></textarea>
+                    <div class="flex-container flexGap5" style="margin-top: 4px;">
+                        <div id="comfyinject_prompter_system_prompt_reset" class="menu_button menu_button_icon">
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>Restore default</span>
+                        </div>
+                    </div>
+                </div>
+
+                <hr class="sysHR" />
+
+                <!-- Tools -->
+                <div class="flex-container flexGap5">
+                    <div id="comfyinject_prompter_preview_btn" class="menu_button menu_button_icon" title="Show exactly what the prompter would be sent. Costs nothing.">
+                        <i class="fa-solid fa-eye"></i>
+                        <span>Preview Context</span>
+                    </div>
+                    <div id="comfyinject_prompter_test_btn" class="menu_button menu_button_icon" title="Run one real prompter request against the last message. No image is generated.">
+                        <i class="fa-solid fa-flask"></i>
+                        <span>Test Prompter</span>
+                    </div>
+                </div>
+
+            </div>
+
+            <hr class="sysHR" />
+
             <!-- Advanced Settings Toggle Button -->
             <div class="flex-container flexGap5">
                 <div id="comfyinject_advanced_toggle" class="menu_button menu_button_icon">

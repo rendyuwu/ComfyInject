@@ -3,11 +3,12 @@ import { resolveSeed, saveLastSeed } from "./state.js";
 
 // Valid AR control tokens.
 // These must match exactly and stay case-sensitive.
-const VALID_AR = new Set(["PORTRAIT", "SQUARE", "LANDSCAPE", "CINEMA"]);
+// Exported so the dedicated prompter's JSON schema enums have a single source of truth.
+export const VALID_AR = new Set(["PORTRAIT", "SQUARE", "LANDSCAPE", "CINEMA"]);
 
 // Valid SHOT control tokens.
 // These must match exactly and stay case-sensitive.
-const VALID_SHOT = new Set([
+export const VALID_SHOT = new Set([
     "CLOSE",
     "MEDIUM",
     "WIDE",
@@ -23,8 +24,8 @@ const VALID_SHOT = new Set([
 // Marker-level fallback values.
 // These are only used when the marker does not provide a usable value.
 // Final generation can still be overridden later by locks.
-const DEFAULT_AR = "SQUARE";
-const DEFAULT_SHOT = "MEDIUM";
+export const DEFAULT_AR = "SQUARE";
+export const DEFAULT_SHOT = "MEDIUM";
 const DEFAULT_SEED = "RANDOM";
 
 // Regex to match a single [[IMG: ... ]] marker.

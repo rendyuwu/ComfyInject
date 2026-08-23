@@ -1,7 +1,31 @@
-import { MODULE_NAME, defaultSettings } from "../settings.js";
+import { MODULE_NAME, defaultSettings, DEFAULT_PROMPTER_SYSTEM_PROMPT } from "../settings.js";
 import { openGallery } from "./gallery.js";
+import { openContextPreview, openPrompterTest } from "./prompter/preview.js";
+import { resetTransportState } from "./prompter/llm.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
+
+// Dedicated prompter fields, bound declaratively — one table instead of a
+// second wall of near-identical handlers.
+// [selector, settings key, kind]
+const PROMPTER_FIELDS = [
+    ["#comfyinject_trigger_mode", "trigger_mode", "select"],
+    ["#comfyinject_prompter_structured_mode", "prompter_structured_mode", "select"],
+    ["#comfyinject_prompter_lore_mode", "prompter_lore_mode", "select"],
+    ["#comfyinject_prompter_max_tokens", "prompter_max_tokens", "int"],
+    ["#comfyinject_prompter_timeout_ms", "prompter_timeout_ms", "int"],
+    ["#comfyinject_prompter_history_count", "prompter_history_count", "int"],
+    ["#comfyinject_prompter_lore_max_chars", "prompter_lore_max_chars", "int"],
+    ["#comfyinject_prompter_max_images_per_message", "prompter_max_images_per_message", "int"],
+    ["#comfyinject_prompter_auto", "prompter_auto", "checkbox"],
+    ["#comfyinject_prompter_include_card", "prompter_include_card", "checkbox"],
+    ["#comfyinject_prompter_include_persona", "prompter_include_persona", "checkbox"],
+    ["#comfyinject_prompter_include_author_note", "prompter_include_author_note", "checkbox"],
+    ["#comfyinject_prompter_include_summary", "prompter_include_summary", "checkbox"],
+    ["#comfyinject_prompter_appearance_enabled", "prompter_appearance_enabled", "checkbox"],
+    ["#comfyinject_prompter_debug", "prompter_debug", "checkbox"],
+    ["#comfyinject_prompter_system_prompt", "prompter_system_prompt", "text"],
+];
 
 /**
  * Gets the current live settings from ST.
@@ -129,6 +153,99 @@ function updateSaveImagesUI(saving, downscaling) {
 }
 
 /**
+ * Fills the connection profile dropdown.
+ *
+ * The Connection Manager owns the dropdown when it can, which keeps it in sync as
+ * profiles are added or renamed. The manual list is the fallback for builds where
+ * handleDropdown is missing or throws.
+ */
+function populatePrompterProfiles() {
+    const context = SillyTavern.getContext();
+    const settings = getSettings();
+    const select = $("#comfyinject_prompter_profile_id");
+    if (!select.length) return;
+
+    const service = context.ConnectionManagerRequestService;
+    const disabled = !!context.extensionSettings?.disabledExtensions?.includes("connection-manager");
+
+    if (disabled || !service) {
+        select.html(`<option value="">Connection Manager is disabled — using the main API</option>`);
+        return;
+    }
+
+    if (typeof service.handleDropdown === "function") {
+        try {
+            service.handleDropdown("#comfyinject_prompter_profile_id", settings.prompter_profile_id, (profile) => {
+                getSettings().prompter_profile_id = profile?.id || "";
+                resetTransportState();
+                saveSettings();
+            });
+            return;
+        } catch (err) {
+            console.warn("[ComfyInject] handleDropdown failed, falling back to a manual profile list", err);
+        }
+    }
+
+    const profiles = Array.isArray(context.extensionSettings?.connectionManager?.profiles)
+        ? context.extensionSettings.connectionManager.profiles
+        : [];
+    const supported = profiles.filter((profile) => {
+        try {
+            return typeof service.isProfileSupported !== "function" || service.isProfileSupported(profile);
+        } catch (err) {
+            return false;
+        }
+    });
+
+    select.empty();
+    select.append(`<option value="">-- Use the active main API --</option>`);
+    for (const profile of supported) {
+        const label = profile.name || profile.id;
+        select.append(`<option value="${profile.id}">${label}</option>`);
+    }
+    select.val(settings.prompter_profile_id || "");
+}
+
+/**
+ * Fills the preset override dropdown. The preset manager only exists for the
+ * currently selected API, so an empty list is normal rather than an error.
+ */
+function populatePrompterPresets() {
+    const select = $("#comfyinject_prompter_preset");
+    if (!select.length) return;
+
+    let presets = [];
+    try {
+        presets = SillyTavern.getContext().getPresetManager?.()?.getAllPresets?.() || [];
+    } catch (err) {
+        presets = [];
+    }
+
+    const current = getSettings().prompter_preset || "";
+    select.empty();
+    select.append(`<option value="">-- Use the profile's own preset --</option>`);
+    for (const preset of presets) {
+        select.append(`<option value="${preset}">${preset}</option>`);
+    }
+    select.val(presets.includes(current) ? current : "");
+}
+
+/**
+ * Populates the dedicated prompter fields from current settings.
+ */
+function populatePrompterUI() {
+    const settings = getSettings();
+
+    for (const [selector, key, kind] of PROMPTER_FIELDS) {
+        if (kind === "checkbox") $(selector).prop("checked", !!settings[key]);
+        else $(selector).val(settings[key] ?? "");
+    }
+
+    populatePrompterProfiles();
+    populatePrompterPresets();
+}
+
+/**
  * Populates all input fields from current settings.
  */
 function populateUI() {
@@ -211,6 +328,9 @@ function populateUI() {
     // Marker repair notifications
     $("#comfyinject_repair_toast_mode").val(settings.repair_toast_mode || "failures");
 
+    // Dedicated prompter
+    populatePrompterUI();
+
     // Populate shot tags
     const shotContainer = $("#comfyinject_shot_tags");
     shotContainer.empty();
@@ -227,6 +347,66 @@ function populateUI() {
             </div>
         `);
     }
+}
+
+/**
+ * Wires up the dedicated prompter block.
+ */
+function wirePrompterEvents() {
+    // Block toggle
+    $("#comfyinject_prompter_toggle").on("click", function () {
+        $("#comfyinject_prompter_block").toggle();
+    });
+
+    // Declarative fields
+    for (const [selector, key, kind] of PROMPTER_FIELDS) {
+        const event = kind === "checkbox" || kind === "select" ? "change" : "input";
+        $(selector).on(event, function () {
+            const settings = getSettings();
+            if (kind === "checkbox") settings[key] = $(this).prop("checked");
+            else if (kind === "int") settings[key] = parseInt($(this).val(), 10);
+            else settings[key] = $(this).val();
+
+            // A changed structured-output setting should retry a backend that
+            // previously refused a schema.
+            if (key === "prompter_structured_mode") resetTransportState();
+
+            saveSettings();
+        });
+    }
+
+    // Connection profile — only bound for the manual fallback list.
+    // handleDropdown owns its own change handler when it is available.
+    $("#comfyinject_prompter_profile_id").on("change", function () {
+        const value = $(this).val();
+        if (getSettings().prompter_profile_id === value) return;
+        getSettings().prompter_profile_id = value;
+        resetTransportState();
+        saveSettings();
+    });
+
+    // Preset override
+    $("#comfyinject_prompter_preset").on("change", function () {
+        getSettings().prompter_preset = $(this).val();
+        saveSettings();
+    });
+
+    // Restore the default prompter instructions
+    $("#comfyinject_prompter_system_prompt_reset").on("click", function () {
+        getSettings().prompter_system_prompt = DEFAULT_PROMPTER_SYSTEM_PROMPT;
+        $("#comfyinject_prompter_system_prompt").val(DEFAULT_PROMPTER_SYSTEM_PROMPT);
+        saveSettings();
+        toastr.success("Default prompter instructions restored.", "ComfyInject");
+    });
+
+    // Tools
+    $("#comfyinject_prompter_preview_btn").on("click", function () {
+        openContextPreview();
+    });
+
+    $("#comfyinject_prompter_test_btn").on("click", function () {
+        openPrompterTest();
+    });
 }
 
 /**
@@ -493,6 +673,9 @@ function wireEvents() {
         saveSettings();
     });
 
+    // Dedicated prompter
+    wirePrompterEvents();
+
     // Reset button — resets the advanced settings only, so everything
     // outside the Advanced block is preserved
     $("#comfyinject_reset").on("click", function () {
@@ -508,6 +691,17 @@ function wireEvents() {
             delete_images_with_chat,
         } = settings;
 
+        // The Dedicated Prompter block lives outside Advanced, so its settings —
+        // including the selected connection profile and any edited instructions —
+        // survive this button the same way the connection settings do.
+        const prompterKeys = Object.keys(settings).filter(
+            (key) => key === "trigger_mode" || key.startsWith("prompter_")
+        );
+        const prompterValues = {};
+        for (const key of prompterKeys) {
+            prompterValues[key] = structuredClone(settings[key]);
+        }
+
         // Reset to defaults
         Object.assign(settings, structuredClone(defaultSettings));
 
@@ -522,6 +716,9 @@ function wireEvents() {
         settings.downscale_max_dimension = downscale_max_dimension;
         settings.webp_quality = webp_quality;
         settings.delete_images_with_chat = delete_images_with_chat;
+
+        // Restore dedicated prompter settings
+        Object.assign(settings, prompterValues);
 
         saveSettings();
         populateUI();

@@ -4,6 +4,26 @@
 
 export const MODULE_NAME = "comfyinject";
 
+// Default system prompt for the dedicated prompter.
+// Kept as its own export so the settings UI can offer a "Restore default" button
+// without ever silently overwriting a prompt the user has edited.
+export const DEFAULT_PROMPTER_SYSTEM_PROMPT = `You are ComfyInject's image director. You read one roleplay message and turn it into a prompt for a text-to-image model.
+
+You never write prose, never continue the story, and never address the user. Your only output is the JSON object described in OUTPUT RULES.
+
+Deciding whether to generate:
+- Generate when the target message establishes or changes something visible: a new scene, a new character, a change of pose, outfit, expression, lighting or location, or a moment that is simply worth illustrating.
+- Skip dialogue that changes nothing visible, skip meta or out-of-character talk, and skip anything that would only repeat the previous image.
+- When in doubt, skip. A missing image costs nothing; a wrong one interrupts the scene.
+
+Writing the prompt:
+- Booru-style comma-separated tags, most important first. No sentences, no narration.
+- Rough order: subject count and identity (1girl, 1boy, solo, 2girls), appearance, clothing, pose and expression, setting, lighting and mood.
+- For any character listed in APPEARANCE REGISTRY, reuse their tags verbatim. Never invent hair, eye or outfit details that contradict the registry, the character card, or WORLD INFO.
+- Describe only what is visible in frame.
+- No seeds, no attention weights, no {{macros}}, no negative-prompt content, no LoRA or embedding calls. Negative prompt, prefix and suffix tags are added by the extension.
+- Pick "ar" and "shot" from the allowed values only.`;
+
 export const defaultSettings = Object.freeze({
 
     // --- ComfyUI Connection ---
@@ -89,6 +109,59 @@ export const defaultSettings = Object.freeze({
     // "failures" = parse failures only
     // "off" = no marker repair toasts
     repair_toast_mode: "failures",
+
+    // --- Trigger Mode ---
+    // How image generation is triggered.
+    // "marker"    = the main roleplay model emits [[IMG: ...]] markers (the original behaviour)
+    // "dedicated" = a separate LLM call reads the chat and decides
+    // "both"      = markers first, dedicated prompter as a fallback
+    // Only "marker" is wired to generation right now; the dedicated path is
+    // built up phase by phase and currently stops at the settings-panel tools.
+    trigger_mode: "marker",
+
+    // --- Dedicated Prompter ---
+    // Fire the prompter automatically on every character message.
+    // When false, only the manual buttons run it.
+    prompter_auto: true,
+
+    // SillyTavern Connection Profile id. ComfyInject stores the id only —
+    // model, endpoint and API key stay in SillyTavern.
+    prompter_profile_id: "",
+
+    // Optional completion preset override. Empty = use the profile's own preset.
+    prompter_preset: "",
+
+    prompter_max_tokens: 1024,
+    prompter_timeout_ms: 60000,
+
+    // "native" = ask the backend for schema-constrained JSON
+    // "json"   = describe the schema in the prompt and parse the reply
+    // Native degrades to json automatically when the backend rejects it.
+    prompter_structured_mode: "native",
+
+    // How many recent messages before the target message to show the prompter.
+    prompter_history_count: 12,
+
+    prompter_include_card: true,
+    prompter_include_persona: true,
+    prompter_include_author_note: false,
+    prompter_include_summary: true,
+
+    // "activated" = only lore entries SillyTavern would currently trigger
+    // "off"       = no lore at all
+    prompter_lore_mode: "activated",
+    prompter_lore_max_chars: 4000,
+
+    // Hard cap applied after validation, whatever the model returns.
+    prompter_max_images_per_message: 1,
+
+    prompter_system_prompt: DEFAULT_PROMPTER_SYSTEM_PROMPT,
+
+    // Include the per-chat appearance registry in the prompter's context.
+    prompter_appearance_enabled: true,
+
+    // Log the assembled prompt and the raw response to the console.
+    prompter_debug: false,
 
     // --- Shot Tags ---
     // Danbooru-style tags prepended to the positive prompt for each SHOT token.
