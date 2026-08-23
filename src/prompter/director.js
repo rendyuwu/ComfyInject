@@ -188,6 +188,7 @@ async function runDirector(messageIndex, { manual }) {
         const validated = validateDirective(parsed, {
             maxImages: settings.prompter_max_images_per_message,
             maxTags: settings.prompter_max_tags,
+            bannedTags: settings.prompter_banned_tags,
             policy: settings.prompter_generate_policy,
         });
         debugLog("validated directive", {

@@ -10,6 +10,7 @@
 
 import { VALID_AR, VALID_SHOT, DEFAULT_AR, DEFAULT_SHOT } from "../parse.js";
 import { DEFAULT_PROMPTER_EXAMPLE_PROMPT } from "../../settings.js";
+import { parseTagList, stripBannedTags } from "./tags.js";
 
 // Schema name sent to the backend. Some providers surface it in errors.
 export const SCHEMA_NAME = "ComfyInjectDirective";
@@ -17,6 +18,12 @@ export const SCHEMA_NAME = "ComfyInjectDirective";
 // fillWorkflow() substitutes the prompt into serialized workflow JSON, so an
 // unbounded prompt is a real hazard rather than just a waste of tokens.
 export const MAX_PROMPT_CHARS = 2000;
+
+// How much of the banned list is recited in OUTPUT RULES. The asymmetry with
+// enforcement is the point: the stated form costs prompt tokens on every single
+// request, the enforced form costs a Set lookup. Someone with a hundred banned
+// tags should pay for the enforcement, not for the recital.
+export const MAX_STATED_BANNED_CHARS = 400;
 
 /**
  * Builds the directive schema from the live token Sets.
@@ -97,6 +104,38 @@ export function toStrictJsonSchema(schema) {
 }
 
 /**
+ * The banned-tag rule as one line of OUTPUT RULES, or nothing when the list is
+ * empty.
+ *
+ * Stating it is the cheap complement to enforcing it, not a substitute: §20.4's
+ * argument applies with extra force here, since models follow "do not write X"
+ * far less reliably than "write Y". The line is what covers a model writing the
+ * banned idea as prose; the validator covers the common case.
+ *
+ * @param {any} bannedTags - Comma-separated string, or an array of tags
+ * @returns {string[]} Zero or one line
+ */
+function renderBannedTagsLine(bannedTags) {
+    const { tags } = parseTagList(bannedTags);
+    if (!tags.length) return [];
+
+    const listed = [];
+    let used = 0;
+    for (const tag of tags) {
+        const next = used ? used + 2 + tag.length : tag.length;
+        // At least one tag is always recited, however long it is — a line that
+        // names nothing would just be noise.
+        if (listed.length && next > MAX_STATED_BANNED_CHARS) break;
+        listed.push(tag);
+        used = next;
+    }
+
+    const rest = tags.length - listed.length;
+    const list = rest ? `${listed.join(", ")}, and ${rest} more not listed here` : listed.join(", ");
+    return [`- "prompt" must not contain any of these tags: ${list}. They are removed if present.`];
+}
+
+/**
  * The OUTPUT RULES section body: the schema, a filled example, and the hard
  * constraints the validator enforces anyway. Sent in both structured modes —
  * native enforcement can be refused mid-request, and this is what makes the
@@ -111,10 +150,11 @@ export function toStrictJsonSchema(schema) {
  * @param {number} [options.maxImages=1]
  * @param {string} [options.examplePrompt] - The example reply's `prompt` string
  * @param {number} [options.maxTags=0] - Tag cap to state; 0 states nothing
+ * @param {any} [options.bannedTags] - Banned tags to recite; empty states nothing
  * @param {boolean} [options.includeSchema=true] - Restate the schema JSON in the prompt
  * @returns {string}
  */
-export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags = 0, includeSchema = true } = {}) {
+export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags = 0, bannedTags = "", includeSchema = true } = {}) {
     const cap = Math.max(1, Number(maxImages) || 1);
     const tagCap = Math.max(0, Math.floor(Number(maxTags) || 0));
     const example = {
@@ -161,6 +201,7 @@ export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags =
         ...(tagCap
             ? [`- "prompt" must contain at most ${tagCap} comma-separated tags, most important first. Extra tags are discarded.`]
             : []),
+        ...renderBannedTagsLine(bannedTags),
         `- "characters" lists the names of the characters visible in that image.`,
     ].join("\n");
 }
@@ -227,13 +268,17 @@ function capTags(prompt, maxTags) {
  * @param {object} [options]
  * @param {number} [options.maxImages=1] - Hard cap on returned images
  * @param {number} [options.maxTags=0] - Hard cap on tags per prompt; 0 disables it
+ * @param {any} [options.bannedTags] - Tags to strip; comma-separated string or array
  * @param {"always" | "judge"} [options.policy="judge"] - Whether the model is the judge
  * @returns {{generate: boolean, reason: string, images: Array<{prompt: string, ar: string, shot: string, characters: string[]}>, notes: string[]}}
  */
-export function validateDirective(parsed, { maxImages = 1, maxTags = 0, policy = "judge" } = {}) {
+export function validateDirective(parsed, { maxImages = 1, maxTags = 0, bannedTags = "", policy = "judge" } = {}) {
     const notes = [];
     const cap = Math.max(1, Number(maxImages) || 1);
     const alwaysGenerate = policy === "always";
+    // Taken as an argument rather than read from settings, so this module stays
+    // free of a ctx() accessor and testable without a mocked SillyTavern.
+    const banned = parseTagList(bannedTags).fingerprints;
 
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         return { generate: false, reason: "", images: [], notes: ["Reply was not a JSON object — treated as skip."] };
@@ -275,6 +320,17 @@ export function validateDirective(parsed, { maxImages = 1, maxTags = 0, policy =
             prompt = prompt.slice(0, MAX_PROMPT_CHARS).trim();
             notes.push(`Prompt truncated to ${MAX_PROMPT_CHARS} characters.`);
         }
+
+        // Before the count cap, after the character truncation. Both orderings are
+        // load-bearing: a banned tag left in place would consume a cap slot and
+        // then be removed anyway, leaving fewer tags than the user asked for, and
+        // truncating characters last would slice through a tag the strip had just
+        // tidied.
+        const stripped = stripBannedTags(prompt, banned);
+        if (stripped.removed.length) {
+            notes.push(`Removed ${stripped.removed.length} banned tag${stripped.removed.length === 1 ? "" : "s"}: ${stripped.removed.join(", ")}.`);
+        }
+        prompt = stripped.prompt;
 
         // After the character truncation, not before: the character cap exists to
         // protect fillWorkflow's string substitution, the tag cap to bound scene

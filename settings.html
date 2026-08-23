@@ -213,6 +213,21 @@
                     added afterwards and are not counted.
                 </small>
 
+                <div style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_banned_tags">Banned tags</label>
+                    <textarea id="comfyinject_prompter_banned_tags" class="text_pole" rows="3"></textarea>
+                    <small>
+                        Comma-separated tags the prompter may not write, e.g.
+                        <code>2girls, multiple_girls, hug, hand_holding</code> for a checkpoint that can only
+                        compose one figure. Stated in <b>OUTPUT RULES</b> and removed from the reply either way,
+                        before <b>Max tags</b> counts. Whole tags only — banning <code>spine</code> leaves
+                        <code>spine_tattoo</code> alone — and <code>_</code> counts as a space, so banning
+                        either of <code>hand_holding</code> and <code>hand holding</code> catches both. Nothing
+                        here reaches the appearance registry either. This is not the <b>Negative Prompt</b>:
+                        that steers the image model, this stops the text model writing the tag at all.
+                    </small>
+                </div>
+
                 <label class="checkbox_label" for="comfyinject_prompter_appearance_enabled" title="Send the per-chat appearance registry to the prompter so characters keep the same hair, eyes and outfit across images.">
                     <input id="comfyinject_prompter_appearance_enabled" type="checkbox" />
                     <span>Use the appearance registry</span>

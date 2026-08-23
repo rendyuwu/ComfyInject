@@ -35,6 +35,7 @@ import { debugLog, warnLog } from "./log.js";
 import { runPrompter, schemaBelongsInPrompt } from "./llm.js";
 import { parseDirective } from "./schema.js";
 import { ensureCardsLoaded, listCastMembers, readBoundLore, renderSections } from "./sources.js";
+import { parseTagList, stripBannedTags, tagFingerprint } from "./tags.js";
 
 export const APPEARANCE_METADATA_KEY = "comfyinject_appearance";
 export const APPEARANCE_SEEDED_KEY = "comfyinject_appearance_seeded";
@@ -96,7 +97,9 @@ function normalizeTags(value, maxChars = MAX_TAGS_CHARS) {
     for (const raw of String(value ?? "").split(",")) {
         const tag = raw.trim().replace(/\s+/g, " ");
         if (!tag) continue;
-        const fingerprint = tag.toLowerCase();
+        // The shared fingerprint, so "silver_hair" and "silver hair" are one tag
+        // here for the same reason a ban on either catches both.
+        const fingerprint = tagFingerprint(tag);
         if (seen.has(fingerprint)) continue;
         seen.add(fingerprint);
         tags.push(tag);
@@ -499,19 +502,38 @@ async function buildSeedContext({ structuredMode = null } = {}) {
 
 /**
  * Validates a seeding reply.
+ *
+ * Banned tags are stripped here as well as in validateDirective, and not for
+ * symmetry's sake: a banned tag that reaches a registry entry is injected into
+ * every subsequent request, where validateDirective only catches it if the model
+ * happens to copy it into `prompt`. A tag the user has banned should not be able
+ * to enter the registry at all.
+ *
+ * Growth needs no equivalent — it distills its tags from an image prompt that has
+ * already been through validateDirective.
+ *
  * @param {any} parsed
+ * @param {object} [options]
+ * @param {any} [options.bannedTags] - Tags to strip; comma-separated string or array
  * @returns {Array<{name: string, tags: string}>}
  */
-export function validateAppearanceReply(parsed) {
+export function validateAppearanceReply(parsed, { bannedTags = "" } = {}) {
     if (!parsed || typeof parsed !== "object") return [];
 
     const raw = Array.isArray(parsed.characters) ? parsed.characters : [];
+    const banned = parseTagList(bannedTags).fingerprints;
     const out = [];
 
     for (const entry of raw) {
         if (!entry || typeof entry !== "object") continue;
         const name = trim(entry.name);
-        const tags = normalizeTags(entry.tags);
+        const stripped = stripBannedTags(entry.tags, banned);
+        if (stripped.removed.length) {
+            warnLog(`dropped ${stripped.removed.length} banned tag(s) from the seeded entry for "${name || "?"}":`, stripped.removed.join(", "));
+        }
+        // An entry left with nothing is dropped rather than written empty — the
+        // same rule an unusable reply has always taken.
+        const tags = normalizeTags(stripped.prompt);
         if (!name || !tags) continue;
         out.push({ name, tags });
     }
@@ -562,7 +584,9 @@ export async function seedRegistry({ signal = null } = {}) {
             maxTokens: Math.max(1024, Number(getSettings().prompter_max_tokens) || 1024),
         });
 
-        const characters = validateAppearanceReply(parseDirective(result.payload));
+        const characters = validateAppearanceReply(parseDirective(result.payload), {
+            bannedTags: getSettings().prompter_banned_tags,
+        });
 
         const written = [];
         const skipped = [];

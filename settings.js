@@ -192,6 +192,17 @@ export const defaultSettings = Object.freeze({
     // append_prompt are added afterwards and are not counted.
     prompter_max_tags: 0,
 
+    // Comma-separated tags the prompter may not write. Stated in OUTPUT RULES and
+    // enforced in both validators, so a tag banned here can neither reach ComfyUI
+    // nor enter the appearance registry. Matched as whole tags on a normalized
+    // fingerprint, so a ban on `hand_holding` also catches `hand holding`.
+    //
+    // Not the same tool as negative_prompt: that is negative conditioning handed
+    // to the image model, this stops the text model writing the tag at all. For a
+    // composition tag like `2girls` on a one-figure checkpoint, the negative
+    // prompt is the weaker of the two.
+    prompter_banned_tags: "",
+
     prompter_system_prompt: DEFAULT_PROMPTER_SYSTEM_PROMPT,
 
     // Rendered as the CONSTRAINTS section, in the cacheable half of the request
