@@ -257,22 +257,82 @@ export function resolveCharacterKey(name) {
 // ---------------------------------------------------------------------------
 
 /**
- * The registry as a prompt section, placed early in the context because it is
- * reference data rather than instruction.
+ * True when `name` appears in `haystack` as a whole word.
+ *
+ * Word boundaries, not substrings: "Ana" must not match "Anastasia", or the whole
+ * filter degrades to "keep anything whose name is a common prefix".
+ * @param {string} haystack
+ * @param {string} name
+ * @returns {boolean}
+ */
+function mentionsName(haystack, name) {
+    if (!haystack || !name) return false;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    try {
+        return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(haystack);
+    } catch (err) {
+        // A name that will not compile into a pattern is kept rather than dropped.
+        debugLog(`could not build a mention pattern for "${name}"`, err);
+        return true;
+    }
+}
+
+/**
+ * True when the scope setting puts the registry in the volatile half of the
+ * request rather than the cacheable half.
+ *
+ * "present" makes the section depend on the target message, so leaving it in the
+ * stable block would invalidate the cached prefix on every single turn — which
+ * costs far more than the entries it drops save.
  * @param {Record<string, any>} settings
+ * @returns {boolean}
+ */
+export function appearanceSectionIsVolatile(settings) {
+    return settings.prompter_appearance_scope === "present";
+}
+
+/**
+ * The registry as a prompt section — reference data, so it is placed early rather
+ * than among the instructions.
+ *
+ * On the default `"all"` scope every entry with tags is sent. On `"present"` an
+ * entry is kept when it belongs to a cast member, or when its name appears in the
+ * target message or the history window that was actually rendered. Cast members
+ * are unconditional on purpose: the character this chat is about is in frame far
+ * more often than their name is written, and dropping them is the worst failure an
+ * appearance registry has available.
+ *
+ * @param {Record<string, any>} settings
+ * @param {object} [frame]
+ * @param {string} [frame.targetText] - The message being illustrated
+ * @param {string} [frame.historyText] - The rendered history window
  * @returns {Array<{title: string, body: string}>}
  */
-export function buildAppearanceSection(settings) {
+export function buildAppearanceSection(settings, { targetText = "", historyText = "" } = {}) {
     if (!settings.prompter_appearance_enabled) return [];
 
-    const lines = listRegistryEntries()
-        .filter(entry => entry.tags)
-        .map(entry => `${entry.name}: ${substituteTrimmed(entry.tags)}`);
-    if (!lines.length) return [];
+    const entries = listRegistryEntries().filter(entry => entry.tags);
+    if (!entries.length) return [];
+
+    let kept = entries;
+    if (appearanceSectionIsVolatile(settings)) {
+        const castKeys = new Set(listCastMembers().map(member => member.key));
+        kept = entries.filter(entry => castKeys.has(entry.key)
+            || mentionsName(targetText, entry.name)
+            || mentionsName(historyText, entry.name));
+
+        const dropped = entries.length - kept.length;
+        if (dropped) {
+            debugLog(`appearance scope "present" dropped ${dropped} of ${entries.length} entries`, {
+                kept: kept.map(entry => entry.name),
+            });
+        }
+    }
+    if (!kept.length) return [];
 
     return [{
         title: "APPEARANCE REGISTRY (use these tags verbatim for these characters)",
-        body: lines.join("\n"),
+        body: kept.map(entry => `${entry.name}: ${substituteTrimmed(entry.tags)}`).join("\n"),
     }];
 }
 

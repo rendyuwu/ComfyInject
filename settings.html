@@ -227,6 +227,22 @@
                     still seed it by hand from <b>Appearance Registry</b> below.
                 </small>
 
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_appearance_scope">Registry Scope</label>
+                    <select id="comfyinject_prompter_appearance_scope" class="text_pole">
+                        <option value="all">All — send every entry</option>
+                        <option value="present">Present — only who is in frame</option>
+                    </select>
+                </div>
+                <small>
+                    <b>Present</b> keeps the character card's own cast plus anyone named in the target message
+                    or the history window. It is for a long chat with many walk-on NPCs; the known cost is that
+                    someone referred to only as "the innkeeper" or by a pronoun is dropped, and their next image
+                    may contradict their last. It also moves the registry into the changing half of the request,
+                    so on a backend that caches prompt prefixes — a Claude profile, for one — <b>All</b> is
+                    usually cheaper as well as better.
+                </small>
+
                 <label class="checkbox_label" for="comfyinject_prompter_debug" title="Log the assembled prompt and the raw response to the browser console.">
                     <input id="comfyinject_prompter_debug" type="checkbox" />
                     <span>Debug logging</span>
@@ -238,8 +254,16 @@
                 <div class="flex-container flexGap5 alignItemsCenter">
                     <label for="comfyinject_prompter_history_count" style="width: 150px;">History messages</label>
                     <input id="comfyinject_prompter_history_count" type="number" class="text_pole" min="0" max="100" step="1" style="width: 70px;" />
+                    <label for="comfyinject_prompter_history_anchor" style="width: 100px;">Anchor stride</label>
+                    <input id="comfyinject_prompter_history_anchor" type="number" class="text_pole" min="0" max="50" step="1" style="width: 70px;" />
                 </div>
-                <small>How many messages before the target message the prompter sees.</small>
+                <small>
+                    How many messages before the target message the prompter sees. This is the largest changing
+                    part of every request, so it is the biggest lever on cost — a handful is usually enough for
+                    room continuity and pronouns. <b>Anchor stride</b> holds the window's start still for that
+                    many messages at a time instead of sliding it by one every turn, so the text is append-only
+                    between jumps; <code>0</code> slides.
+                </small>
 
                 <label class="checkbox_label" for="comfyinject_prompter_include_card">
                     <input id="comfyinject_prompter_include_card" type="checkbox" />

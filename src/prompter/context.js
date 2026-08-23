@@ -8,7 +8,7 @@
 
 import { MODULE_NAME } from "../../settings.js";
 import { substituteTrimmed } from "../macros.js";
-import { buildAppearanceSection } from "./appearance.js";
+import { appearanceSectionIsVolatile, buildAppearanceSection } from "./appearance.js";
 import { debugLog } from "./log.js";
 import { schemaBelongsInPrompt } from "./llm.js";
 import { renderOutputRules } from "./schema.js";
@@ -223,8 +223,31 @@ async function buildWorldInfoSection(settings, targetIndex) {
 }
 
 /**
- * The messages leading up to the target, so the prompter can tell a new scene
- * from a continuation of the last one. The target itself is rendered separately.
+ * Where the history window starts.
+ *
+ * Sliding the window by one every turn changes the rendered history at its head
+ * as well as its tail, so even inside the volatile block the whole thing is new
+ * text every request. Anchoring holds the start still at a multiple of the stride
+ * and only moves it when the window would otherwise exceed the message count, so
+ * between jumps the rendered history is append-only: this turn's text is a prefix
+ * of the next turn's.
+ *
+ * @param {number} total - Visible messages before the target
+ * @param {number} count - prompter_history_count
+ * @param {number} stride - prompter_history_anchor; 0 slides
+ * @returns {number}
+ */
+function historyWindowStart(total, count, stride) {
+    const earliest = Math.max(0, total - count);
+    if (stride <= 0) return earliest;
+    // Ceil, not floor: the anchor has to be at or after the earliest start the
+    // count allows, or the window would grow past prompter_history_count.
+    return Math.min(total, Math.ceil(earliest / stride) * stride);
+}
+
+/**
+ * The messages leading up to the target, so the prompter can resolve pronouns and
+ * knows where the scene is. The target itself is rendered separately.
  * @param {number} targetIndex
  * @returns {Section[]}
  */
@@ -236,7 +259,8 @@ function buildHistorySection(settings, targetIndex) {
     const visible = chat
         .slice(0, targetIndex)
         .filter((/** @type {any} */ m) => m && !m.is_system);
-    const slice = visible.slice(-count);
+    const stride = Math.max(0, Math.floor(Number(settings.prompter_history_anchor) || 0));
+    const slice = visible.slice(historyWindowStart(visible.length, count, stride));
 
     const lines = slice.map((/** @type {any} */ message) => {
         const speaker = message.name || (message.is_user ? "User" : "Character");
@@ -295,8 +319,20 @@ export async function buildPrompterContext({ messageIndex = null, structuredMode
     /** @type {Section[]} */
     const volatileSections = [];
 
+    // Built before the registry section, because scoping the registry to who is in
+    // frame needs to know what the model is actually going to read.
+    const historySections = buildHistorySection(settings, targetIndex);
+    const appearanceSections = buildAppearanceSection(settings, {
+        targetText,
+        historyText: historySections.map(section => section.body).join("\n\n"),
+    });
+    const registryIsVolatile = appearanceSectionIsVolatile(settings);
+    if (registryIsVolatile && appearanceSections.length) {
+        debugLog("appearance registry is in the volatile block: scope is \"present\", so it depends on the target message and cannot be cached");
+    }
+
     stable.push(...buildTaskSection(settings));
-    stable.push(...buildAppearanceSection(settings));
+    if (!registryIsVolatile) stable.push(...appearanceSections);
     stable.push(...buildSessionSection());
 
     if (settings.prompter_include_card) {
@@ -317,9 +353,10 @@ export async function buildPrompterContext({ messageIndex = null, structuredMode
         }),
     });
 
+    if (registryIsVolatile) volatileSections.push(...appearanceSections);
     if (settings.prompter_include_summary) volatileSections.push(...buildSummarySection());
     volatileSections.push(...(await buildWorldInfoSection(settings, targetIndex)));
-    volatileSections.push(...buildHistorySection(settings, targetIndex));
+    volatileSections.push(...historySections);
 
     volatileSections.push({
         title: "TARGET MESSAGE (illustrate this one)",
