@@ -9,6 +9,14 @@ import {
     DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
     DEFAULT_PROMPTER_SEED_USER_TURN,
 } from "../settings.js";
+// Straight from defaults.js rather than through settings.js's re-exports: these
+// two are not defaults any field is ever set to, only fingerprints of what an
+// earlier version shipped. Keeping them out of the settings export list keeps
+// that list meaning "the text a Restore-default button writes".
+import {
+    DEFAULT_PROMPTER_SYSTEM_PROMPT_V8,
+    DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE_V8,
+} from "./prompter/defaults.js";
 import { openGallery } from "./gallery.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS, fetchWithTimeout, requestTimeoutMs } from "./http.js";
 import { openContextPreview, openPrompterTest } from "./prompter/preview.js";
@@ -61,6 +69,18 @@ const PROMPTER_FIELDS = [
 function systemPromptDefault(policy) {
     return policy === "judge" ? DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE : DEFAULT_PROMPTER_SYSTEM_PROMPT;
 }
+
+// Every shipped TASK body, current and historical. A field holding any of them is
+// text this extension wrote, not text the user wrote, so the generate-policy
+// switch may carry it over. Without the older entries an install that upgraded
+// through Phase 8 would have its untouched field classed as edited and left
+// holding a bullet pointing at a section that may not exist.
+const PRISTINE_SYSTEM_PROMPTS = [
+    DEFAULT_PROMPTER_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE,
+    DEFAULT_PROMPTER_SYSTEM_PROMPT_V8,
+    DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE_V8,
+];
 
 // Restore-default buttons, bound the same declarative way. Each one restores its
 // own field and nothing else, and the default it writes is the same export
@@ -313,7 +333,8 @@ function updatePrefillNote() {
 
 /**
  * Moves Prompter Instructions to the new policy's shipped default when — and only
- * when — the field still holds the other policy's shipped default verbatim.
+ * when — the field still holds one of the shipped defaults verbatim, this
+ * version's or an earlier one's.
  *
  * A pristine field following the policy is what the user means by switching it.
  * An edited field is theirs, so it is left alone and the panel says so; the
@@ -325,8 +346,7 @@ function syncSystemPromptToPolicy() {
     const current = String(settings.prompter_system_prompt ?? "");
     if (current === wanted) return;
 
-    const pristine = current === DEFAULT_PROMPTER_SYSTEM_PROMPT
-        || current === DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE;
+    const pristine = PRISTINE_SYSTEM_PROMPTS.includes(current);
 
     if (!pristine) {
         toastr.info(

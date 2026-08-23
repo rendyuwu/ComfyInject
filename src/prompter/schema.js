@@ -147,6 +147,12 @@ export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags =
         `- "ar" must be one of: ${[...VALID_AR].join(", ")}.`,
         `- "shot" must be one of: ${[...VALID_SHOT].join(", ")}.`,
         `- "prompt" is capped at ${MAX_PROMPT_CHARS} characters.`,
+        // Contract, not taste, so it lives here rather than in TASK. A user is
+        // invited to rewrite TASK wholesale; a user who does that must not thereby
+        // stop telling the model that LoRA calls and attention weights are
+        // forbidden, because that string goes straight into the workflow JSON
+        // fillWorkflow substitutes into.
+        `- "prompt" contains no seeds, no attention weights, no LoRA or embedding calls, no negative-prompt content and no {{macros}}. Negative prompt, prefix and suffix tags are added by the extension.`,
         // Stated as well as enforced. The cap is enforced in validateDirective
         // because a small model follows instructions poorly — but a silent cap
         // keeps the first N tags, and "most important first" is a convention, not

@@ -51,6 +51,13 @@ const MAX_ENTRIES = 40;
 // character, so it is capped harder — it is a first guess, not a considered one.
 const MAX_GROWN_TAGS_CHARS = 240;
 
+// The one instruction the registry needs, kept in the section body so it is sent
+// exactly when the data is. Not a setting: it is the contract that makes the
+// registry worth having, and a registry the model is free to contradict is not a
+// registry.
+export const REGISTRY_DISCIPLINE =
+    "Use these tags verbatim for the characters listed. Do not invent hair, eye or outfit details that contradict them.";
+
 // Chats whose seeding pass failed this session. A transport error should not
 // re-fire on every single message, but it should not be remembered across a
 // reload either, so this is deliberately in memory only.
@@ -331,8 +338,17 @@ export function buildAppearanceSection(settings, { targetText = "", historyText 
     if (!kept.length) return [];
 
     return [{
-        title: "APPEARANCE REGISTRY (use these tags verbatim for these characters)",
-        body: kept.map(entry => `${entry.name}: ${substituteTrimmed(entry.tags)}`).join("\n"),
+        title: "APPEARANCE REGISTRY",
+        // The instruction travels with the data rather than living in TASK.
+        // buildAppearanceSection returns nothing when the feature is off, when no
+        // entry has tags, or when "present" scope drops everyone — and seeding is
+        // a once-per-chat call that runs *before* the first directive, so a bullet
+        // in TASK told every fresh chat to consult a section that was not there.
+        body: [
+            REGISTRY_DISCIPLINE,
+            "",
+            ...kept.map(entry => `${entry.name}: ${substituteTrimmed(entry.tags)}`),
+        ].join("\n"),
     }];
 }
 
