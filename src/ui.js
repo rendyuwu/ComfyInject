@@ -2,6 +2,7 @@ import { MODULE_NAME, defaultSettings, DEFAULT_PROMPTER_SYSTEM_PROMPT } from "..
 import { openGallery } from "./gallery.js";
 import { openContextPreview, openPrompterTest } from "./prompter/preview.js";
 import { resetTransportState } from "./prompter/llm.js";
+import { addDirectButtons } from "./prompter/director.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
 
@@ -370,6 +371,10 @@ function wirePrompterEvents() {
             // A changed structured-output setting should retry a backend that
             // previously refused a schema.
             if (key === "prompter_structured_mode") resetTransportState();
+
+            // The per-message prompter button only exists in dedicated and both
+            // mode, so switching modes has to add or remove it right away.
+            if (key === "trigger_mode") addDirectButtons();
 
             saveSettings();
         });

@@ -1,6 +1,7 @@
 import { MODULE_NAME } from "../settings.js";
 import { resolveSeed } from "./state.js";
 import { saveImageLocally } from "./save.js";
+import { enqueue, queueDepth } from "./queue.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
 
@@ -123,17 +124,40 @@ function buildImageUrl(filename, subfolder, host) {
 }
 
 /**
- * Main entry point. Takes parsed marker data and returns a usable image URL.
- * @param {object} params
- * @param {string} params.prompt - The positive prompt text
- * @param {string} params.ar - Aspect ratio token (PORTRAIT, SQUARE, etc.)
- * @param {string} params.shot - Shot type token (CLOSE, MEDIUM, etc.)
- * @param {number} params.seed - The resolved numeric seed (LOCK/RANDOM already resolved by state.js)
- * @param {number} params.messageIndex - The index of the message being processed (needed for LOCK seed resolution)
- * @param {boolean} [params.bypassSeedLock] - If true, skip the seed lock and use the provided seed directly (used by retry)
- * @returns {Promise<{imageUrl: string, seed: number, prompt: string, promptId: string, filename: string, effectiveAr: string, effectiveShot: string, resolution: {width: number, height: number}, shotTags: string}>}
+ * @typedef {object} GenerateImageParams
+ * @property {string} prompt - The positive prompt text
+ * @property {string} ar - Aspect ratio token (PORTRAIT, SQUARE, etc.)
+ * @property {string} shot - Shot type token (CLOSE, MEDIUM, etc.)
+ * @property {number} seed - The resolved numeric seed (LOCK/RANDOM already resolved by state.js)
+ * @property {number} messageIndex - The index of the message being processed (needed for LOCK seed resolution)
+ * @property {boolean} [bypassSeedLock] - If true, skip the seed lock and use the provided seed directly (used by retry)
+ *
+ * @typedef {{imageUrl: string, seed: number, prompt: string, promptId: string, filename: string, effectiveAr: string, effectiveShot: string, resolution: {width: number, height: number}, shotTags: string}} GenerateImageResult
  */
-export async function generateImage({ prompt, ar, shot, seed, messageIndex, bypassSeedLock = false }) {
+
+/**
+ * Main entry point. Takes parsed marker data and returns a usable image URL.
+ *
+ * Every submission is serialized through the shared queue, so the marker path,
+ * the dedicated prompter and the retry button can never hit ComfyUI at once.
+ *
+ * @param {GenerateImageParams} params
+ * @returns {Promise<GenerateImageResult>}
+ */
+export function generateImage(params) {
+    const pending = queueDepth();
+    if (pending > 0) {
+        console.log(`[ComfyInject] Queued behind ${pending} pending image(s)`);
+    }
+    return enqueue(() => runGeneration(params));
+}
+
+/**
+ * The actual generation. Only ever called from the queue.
+ * @param {GenerateImageParams} params
+ * @returns {Promise<GenerateImageResult>}
+ */
+async function runGeneration({ prompt, ar, shot, seed, messageIndex, bypassSeedLock = false }) {
     const settings = getSettings();
 
     // Resolve resolution — use locked resolution if enabled, otherwise use the AR token

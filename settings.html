@@ -118,9 +118,11 @@
                     </select>
                 </div>
                 <small>
-                    Only <b>Marker</b> currently generates images. The dedicated path is wired up to
-                    the tools at the bottom of this block; automatic generation lands with the next
-                    piece of it.
+                    In <b>Dedicated</b> mode <code>[[IMG: ...]]</code> markers are no longer a trigger —
+                    the prompter decides on its own, and you can delete the marker instruction from your
+                    Post-History Instructions. In <b>Both</b> mode markers win: the prompter stands down
+                    on any message that already got an image from one. Every bot message also gets a
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> button for running the prompter by hand.
                 </small>
 
                 <hr class="sysHR" />

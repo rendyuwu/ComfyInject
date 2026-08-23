@@ -1,0 +1,402 @@
+// Orchestration for the dedicated prompter path.
+//
+// One character message in, zero or more images out:
+//
+//   CHARACTER_MESSAGE_RENDERED
+//     ├─ guards: trigger mode, auto enabled, bot message with text, not already
+//     │          illustrated, nothing else in flight
+//     ├─ prompter/context.build()   → the system prompt
+//     ├─ prompter/llm.send()        → raw reply
+//     ├─ prompter/schema.validate() → { generate, reason, images[] }
+//     ├─ generate === false         → record the decision and stop
+//     └─ per image: resolveSeed → generateImage (serialized by src/queue.js)
+//                   → append the <img> → metadata → save
+//
+// The <img> tag shape is identical to the marker path's, so retry, the gallery,
+// the outbound rewrite and the cleanup registry all keep working untouched.
+//
+// Concurrency rules, deliberately stricter than the reference extensions:
+// one prompter request at a time, event re-entry is dropped rather than
+// cancelling the request in flight, and CHAT_CHANGED aborts and resets.
+
+import { MODULE_NAME } from "../../settings.js";
+import { generateImage } from "../comfy.js";
+import { resolveSeed, saveLastSeed } from "../state.js";
+import {
+    appendImageToMessage,
+    buildImgTag,
+    countComfyImages,
+    findIndexBySendDate,
+    persistMessageImages,
+    renderMessageWithSuffix,
+    rerenderMessage,
+} from "../dom.js";
+import { buildPrompterContext } from "./context.js";
+import { getErrorChain, isTimeoutError, runPrompter } from "./llm.js";
+import { parseDirective, validateDirective } from "./schema.js";
+import { debugEnabled, debugLog, warnLog } from "./log.js";
+
+// The per-message manual trigger, injected into ST's own message button row.
+const DIRECT_BUTTON_CLASS = "comfyinject-direct";
+const DIRECT_ICON_CLASS = "fa-wand-magic-sparkles";
+
+// One request at a time. Event re-entry is dropped; the manual button reports
+// that it is busy rather than killing work in progress.
+let inFlight = false;
+/** @type {AbortController | null} */
+let controller = null;
+
+/** @returns {any} */
+function ctx() {
+    return SillyTavern.getContext();
+}
+
+/** @returns {Record<string, any>} */
+function getSettings() {
+    return ctx().extensionSettings[MODULE_NAME];
+}
+
+/**
+ * True when the dedicated path is switched on at all.
+ * @returns {boolean}
+ */
+function dedicatedEnabled() {
+    const mode = getSettings()?.trigger_mode;
+    return mode === "dedicated" || mode === "both";
+}
+
+/**
+ * Failure feedback follows the existing marker-repair toast convention: an
+ * automatic run stays silent when the user asked for silence, but an explicitly
+ * requested run always answers.
+ * @param {string} text
+ * @param {boolean} manual
+ */
+function notifyFailure(text, manual) {
+    const mode = getSettings()?.repair_toast_mode || "failures";
+    if (!manual && mode === "off") return;
+    toastr.error(text, "ComfyInject");
+}
+
+/**
+ * Runs the prompter for one message and generates whatever it asks for.
+ * @param {number} messageIndex
+ * @param {object} options
+ * @param {boolean} options.manual - True when a user clicked the per-message button
+ */
+async function runDirector(messageIndex, { manual }) {
+    const settings = getSettings();
+    const message = ctx().chat?.[messageIndex];
+    if (!message) return;
+
+    const sendDate = message.send_date;
+
+    inFlight = true;
+    controller = new AbortController();
+    const signal = controller.signal;
+
+    try {
+        let built;
+        try {
+            built = await buildPrompterContext({ messageIndex });
+        } catch (err) {
+            debugLog("context build refused", err);
+            if (manual) toastr.warning(err?.message || String(err), "ComfyInject");
+            return;
+        }
+
+        debugLog("prompt assembled", { messageIndex, sections: built.sections.length, chars: built.chars });
+
+        let result;
+        try {
+            result = await runPrompter({ systemPrompt: built.systemPrompt, signal });
+        } catch (err) {
+            // An abort is a skip, not an error — no toast, no partial image.
+            if (signal.aborted) {
+                debugLog("prompter aborted", messageIndex);
+                return;
+            }
+            warnLog("prompter request failed", getErrorChain(err));
+            notifyFailure(
+                isTimeoutError(err) ? "The prompter request timed out." : "The prompter request failed.",
+                manual
+            );
+            return;
+        }
+
+        if (signal.aborted) return;
+
+        let parsed;
+        try {
+            parsed = parseDirective(result.payload);
+        } catch (err) {
+            warnLog("prompter reply could not be parsed", err?.message || err);
+            notifyFailure(err?.message || "The prompter's reply could not be parsed.", manual);
+            return;
+        }
+
+        const validated = validateDirective(parsed, { maxImages: settings.prompter_max_images_per_message });
+        if (validated.notes.length) debugLog("validation notes", validated.notes);
+
+        if (!validated.generate) {
+            debugLog("decision: skip", { messageIndex, reason: validated.reason });
+            if (debugEnabled()) {
+                toastr.info(
+                    `Prompter skipped this message${validated.reason ? `: ${validated.reason}` : ""}`,
+                    "ComfyInject"
+                );
+            }
+            return;
+        }
+
+        debugLog("decision: generate", { messageIndex, images: validated.images.length, reason: validated.reason });
+
+        await generateAndAppend({
+            sendDate,
+            fallbackIndex: messageIndex,
+            images: validated.images,
+            reason: validated.reason,
+            signal,
+            manual,
+        });
+    } finally {
+        inFlight = false;
+        controller = null;
+    }
+}
+
+/**
+ * Generates each approved image and appends it to the message.
+ *
+ * Submissions go through generateImage(), which serializes them behind the
+ * marker path and the retry button. The chat can shift while ComfyUI works, so
+ * the message is re-found by send_date after every await.
+ *
+ * @param {object} params
+ * @param {string} params.sendDate
+ * @param {number} params.fallbackIndex
+ * @param {Array<{prompt: string, ar: string, shot: string, characters: string[]}>} params.images
+ * @param {string} params.reason
+ * @param {AbortSignal} params.signal
+ * @param {boolean} params.manual
+ */
+async function generateAndAppend({ sendDate, fallbackIndex, images, reason, signal, manual }) {
+    for (let i = 0; i < images.length; i++) {
+        if (signal.aborted) return;
+
+        let index = findIndexBySendDate(sendDate);
+        if (index === -1) index = fallbackIndex;
+        let message = ctx().chat?.[index];
+        if (!message || message.send_date !== sendDate) {
+            debugLog("target message is gone, stopping");
+            return;
+        }
+
+        const image = images[i];
+        const position = images.length > 1 ? ` ${i + 1}/${images.length}` : "";
+        renderMessageWithSuffix(
+            index,
+            message,
+            `<span class="comfyinject-pending">[Generating image${position}...]</span>`
+        );
+
+        // The prompter never picks seeds — that is the extension's business, and
+        // letting it choose would silently defeat the seed lock.
+        const seed = resolveSeed("RANDOM", index);
+
+        let result;
+        try {
+            result = await generateImage({
+                prompt: image.prompt,
+                ar: image.ar,
+                shot: image.shot,
+                seed,
+                messageIndex: index,
+            });
+        } catch (err) {
+            console.error("[ComfyInject] Dedicated-path image generation failed:", err);
+            const currentIndex = findIndexBySendDate(sendDate);
+            if (currentIndex !== -1) rerenderMessage(currentIndex, ctx().chat[currentIndex]);
+            notifyFailure("Image generation failed.", manual);
+            return;
+        }
+
+        if (signal.aborted) {
+            debugLog("aborted after generation, discarding the image");
+            return;
+        }
+
+        // Re-resolve after the await: messages may have been deleted or moved.
+        index = findIndexBySendDate(sendDate);
+        if (index === -1) {
+            debugLog("target message vanished while generating, discarding the image");
+            return;
+        }
+        message = ctx().chat[index];
+
+        saveLastSeed(result.seed);
+
+        appendImageToMessage(message, buildImgTag(result.imageUrl, result.prompt, result.seed));
+        await persistMessageImages(index, message, [{
+            ar: image.ar,
+            shot: image.shot,
+            promptId: result.promptId,
+            filename: result.filename,
+            effectiveAr: result.effectiveAr,
+            effectiveShot: result.effectiveShot,
+            resolution: result.resolution,
+            shotTags: result.shotTags,
+            repairMeta: null,
+            source: "dedicated",
+            reason,
+            characters: image.characters,
+        }], { appendMetadata: true });
+
+        console.log(`[ComfyInject] Prompter image appended to message ${index}`);
+    }
+}
+
+/**
+ * CHARACTER_MESSAGE_RENDERED handler.
+ *
+ * In both mode the marker path has already run by the time this fires — ST's
+ * event emitter awaits listeners in registration order — so an image already in
+ * the message means the roleplay model emitted a marker and this run stands down.
+ * @param {number} index
+ */
+async function onCharacterMessage(index) {
+    if (!dedicatedEnabled()) return;
+    if (!getSettings()?.prompter_auto) return;
+
+    const message = ctx().chat?.[index];
+    if (!message || message.is_user || message.is_system) return;
+    if (!String(message.mes ?? "").trim()) return;
+
+    if (countComfyImages(message.mes) > 0) {
+        debugLog("skipping: the message already has an image", index);
+        return;
+    }
+
+    if (inFlight) {
+        debugLog("skipping: a prompter request is already in flight", index);
+        return;
+    }
+
+    await runDirector(index, { manual: false });
+}
+
+/**
+ * Reading context must never outlive its chat: abort whatever is in flight and
+ * drop the state, then re-mount the manual buttons for the new chat.
+ */
+function onChatChanged() {
+    if (controller) {
+        controller.abort(new DOMException("Chat changed", "AbortError"));
+        controller = null;
+    }
+    inFlight = false;
+    scheduleDirectButtons();
+}
+
+/**
+ * Swaps the manual button between its icon and a spinner.
+ * @param {HTMLElement} button
+ * @param {boolean} busy
+ */
+function setButtonBusy(button, busy) {
+    button.classList.toggle(DIRECT_ICON_CLASS, !busy);
+    button.classList.toggle("fa-spinner", busy);
+    button.classList.toggle("fa-spin", busy);
+    button.style.pointerEvents = busy ? "none" : "";
+}
+
+/**
+ * Adds the manual trigger to every bot message's button row, and removes them
+ * all again when the dedicated path is switched off.
+ *
+ * Like the retry buttons, these are pure DOM injection and never persisted —
+ * ST's sanitizer strips anything custom out of a message's saved text.
+ */
+export function addDirectButtons() {
+    const enabled = dedicatedEnabled();
+
+    if (!enabled) {
+        document.querySelectorAll(`.${DIRECT_BUTTON_CLASS}`).forEach(button => button.remove());
+        return;
+    }
+
+    for (const node of document.querySelectorAll("#chat .mes")) {
+        if (node.getAttribute("is_user") === "true") continue;
+        if (node.getAttribute("is_system") === "true") continue;
+
+        const row = node.querySelector(".extraMesButtons");
+        if (!row || row.querySelector(`.${DIRECT_BUTTON_CLASS}`)) continue;
+
+        const button = document.createElement("div");
+        button.className = `mes_button ${DIRECT_BUTTON_CLASS} fa-solid ${DIRECT_ICON_CLASS}`;
+        button.title = "ComfyInject: ask the prompter to illustrate this message";
+        row.prepend(button);
+    }
+}
+
+/**
+ * ST re-renders the message DOM after swipes and edits, so the buttons are
+ * re-added on the same 100 ms delay the retry buttons use.
+ */
+function scheduleDirectButtons() {
+    setTimeout(addDirectButtons, 100);
+}
+
+/**
+ * Delegated click handler, bound once. The buttons themselves come and go with
+ * every re-render.
+ * @param {MouseEvent} event
+ */
+async function onDirectClick(event) {
+    const target = /** @type {HTMLElement | null} */ (event.target);
+    const button = target?.closest?.(`.${DIRECT_BUTTON_CLASS}`);
+    if (!(button instanceof HTMLElement)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (inFlight) {
+        toastr.info("The prompter is already working on a message.", "ComfyInject");
+        return;
+    }
+
+    const index = Number(button.closest(".mes")?.getAttribute("mesid"));
+    if (!Number.isInteger(index) || index < 0) return;
+
+    setButtonBusy(button, true);
+    try {
+        await runDirector(index, { manual: true });
+    } finally {
+        setButtonBusy(button, false);
+    }
+}
+
+/**
+ * Registers the dedicated path's listeners.
+ * Must be called after initDom(): ST's event emitter awaits listeners in
+ * registration order, which is what gives the marker path first refusal on a new
+ * message in both mode.
+ */
+export function initDirector() {
+    const { eventSource, event_types } = ctx();
+
+    eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessage);
+    eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+
+    for (const type of [event_types.MESSAGE_SWIPED, event_types.MESSAGE_UPDATED, event_types.MESSAGE_EDITED]) {
+        eventSource.on(type, scheduleDirectButtons);
+    }
+    eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, scheduleDirectButtons);
+    eventSource.on(event_types.USER_MESSAGE_RENDERED, scheduleDirectButtons);
+
+    document.addEventListener("click", onDirectClick, true);
+
+    scheduleDirectButtons();
+
+    console.log("[ComfyInject] Prompter director initialized");
+}

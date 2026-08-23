@@ -3,29 +3,64 @@ import { generateImage } from "./comfy.js";
 import { saveLastSeed, getImageData } from "./state.js";
 import { MODULE_NAME } from "../settings.js";
 
+// Matches every already-injected ComfyInject image in a message's text.
+const IMG_TAG_REGEX_GLOBAL = /<img class="comfyinject-image"[^>]*>/g;
+
 /**
  * Builds the <img> tag string that gets injected into the message.
  * Stores prompt and seed as data attributes for outbound.js to read.
+ * The shape is shared by the marker path and the dedicated prompter path, which
+ * is what lets retry, the gallery, the outbound rewrite and cleanup stay unaware
+ * of which one produced a given image.
  * @param {string} imageUrl - The full ComfyUI /view URL
  * @param {string} prompt - The raw prompt returned by generateImage()
  * @param {number} seed - The resolved seed used for generation
  * @returns {string} The HTML img tag string
  */
-function buildImgTag(imageUrl, prompt, seed) {
+export function buildImgTag(imageUrl, prompt, seed) {
     return `<img class="comfyinject-image" src="${imageUrl}" data-prompt="${prompt.replace(/"/g, '&quot;')}" data-seed="${seed}" />`;
 }
 
 /**
+ * Counts the ComfyInject images already present in a message's text.
+ * @param {string} text - A message's mes field
+ * @returns {number}
+ */
+export function countComfyImages(text) {
+    return (String(text ?? "").match(IMG_TAG_REGEX_GLOBAL) || []).length;
+}
+
+/**
  * Finds the current array index of a message by its send_date.
+ * Messages shift while an image is generating, so anything that awaits has to
+ * re-resolve the index instead of holding onto the one it started with.
  * @param {string} sendDate - The send_date to look for
  * @returns {number} The current index, or -1 if not found
  */
-function findIndexBySendDate(sendDate) {
+export function findIndexBySendDate(sendDate) {
     const context = SillyTavern.getContext();
     for (let i = 0; i < context.chat.length; i++) {
         if (context.chat[i].send_date === sendDate) return i;
     }
     return -1;
+}
+
+/**
+ * Returns the current trigger mode.
+ * @returns {"marker" | "dedicated" | "both"}
+ */
+function getTriggerMode() {
+    return SillyTavern.getContext().extensionSettings[MODULE_NAME]?.trigger_mode || "marker";
+}
+
+/**
+ * True when [[IMG: ... ]] markers should still be parsed and generated from.
+ * In dedicated mode they are left alone as plain text.
+ * @returns {boolean}
+ */
+function markerPathEnabled() {
+    const mode = getTriggerMode();
+    return mode === "marker" || mode === "both";
 }
 
 /**
@@ -212,6 +247,91 @@ function addAllRetryButtons() {
 }
 
 /**
+ * Appends an <img> tag to the end of a message's text.
+ * This is how the dedicated prompter path places images: it has no marker to
+ * replace, and end-of-message is the only placement that is always correct.
+ * @param {object} message - A SillyTavern chat message object
+ * @param {string} imgTag - Output of buildImgTag()
+ */
+export function appendImageToMessage(message, imgTag) {
+    const text = String(message.mes ?? "").trimEnd();
+    message.mes = text ? `${text}\n\n${imgTag}` : imgTag;
+}
+
+/**
+ * Re-renders a message and re-adds its retry buttons.
+ * updateMessageBlock calls ST's reasoning handler, which can throw on some
+ * messages, so every call to it in this extension is wrapped.
+ * @param {number} index - The current message array index
+ * @param {object} message - The message object to render
+ */
+export function rerenderMessage(index, message) {
+    try {
+        SillyTavern.getContext().updateMessageBlock(index, message);
+    } catch (e) {
+        // ST's reasoning handler may crash on some messages, that's okay
+    }
+    addRetryButtons(index);
+}
+
+/**
+ * Renders a message with a temporary suffix — a pending placeholder — without
+ * writing the suffix into the message itself.
+ * @param {number} index - The current message array index
+ * @param {object} message - The message object to render
+ * @param {string} suffixHtml - HTML appended for this render only
+ */
+export function renderMessageWithSuffix(index, message, suffixHtml) {
+    const original = message.mes;
+    message.mes = `${String(original ?? "").trimEnd()}\n\n${suffixHtml}`;
+    try {
+        SillyTavern.getContext().updateMessageBlock(index, message);
+    } catch (e) {
+        // ST's reasoning handler may crash on some messages, that's okay
+    }
+    message.mes = original;
+}
+
+/**
+ * The shared tail of both generation paths: re-render, re-add retry buttons,
+ * write image metadata keyed by send_date, and persist chat and metadata.
+ *
+ * Metadata entry order must line up with <img> tag order in the message, because
+ * that is how retryImage() maps a button back to its metadata. The marker path
+ * replaces the message's entries wholesale; the dedicated path appends its own
+ * after whatever is already there, which is what keeps both-mode ordering right.
+ *
+ * @param {number} index - The current message array index
+ * @param {object} message - The message object, already carrying its new <img> tags
+ * @param {object[]} entries - One metadata entry per newly generated image
+ * @param {object} [options]
+ * @param {boolean} [options.appendMetadata=false] - Append to existing entries instead of replacing them
+ */
+export async function persistMessageImages(index, message, entries, { appendMetadata = false } = {}) {
+    const context = SillyTavern.getContext();
+
+    rerenderMessage(index, message);
+
+    if (!context.chatMetadata[MODULE_NAME]) {
+        context.chatMetadata[MODULE_NAME] = {};
+    }
+    const store = context.chatMetadata[MODULE_NAME];
+
+    if (appendMetadata) {
+        // Legacy chats key metadata by array index instead of send_date. Seed
+        // from the legacy entry so appended images do not renumber the old ones.
+        const existing = getImageData(store, message.send_date);
+        const base = existing.length > 0 ? existing : getImageData(store, index);
+        store[message.send_date] = [...base, ...entries];
+    } else {
+        store[message.send_date] = entries;
+    }
+
+    await context.saveMetadata();
+    await context.saveChat();
+}
+
+/**
  * Processes a single message by index.
  * If it contains [[IMG: ... ]] markers, generates the images sequentially,
  * injects <img> tags into both the DOM and the mes field,
@@ -228,6 +348,10 @@ async function processMessage(index, options = {}) {
 
     // Only process bot messages
     if (message.is_user) return { repairedCount: 0, totalCount: 0 };
+
+    // In dedicated mode markers are not a trigger at all — the prompter decides,
+    // and any marker the roleplay model still emits stays plain text.
+    if (!markerPathEnabled()) return { repairedCount: 0, totalCount: 0 };
 
     // Skip if no marker present
     if (!hasImageMarker(message.mes)) return { repairedCount: 0, totalCount: 0 };
@@ -363,26 +487,9 @@ async function processMessage(index, options = {}) {
         }
     }
 
-    // Re-render the message using ST's own update function
-    try {
-        updateMessageBlock(index, message);
-    } catch (e) {
-        // ST's reasoning handler may crash on some messages, that's okay
-        // metadata and saveChat still run below
-    }
-
-    // Add retry buttons via DOM manipulation (after ST renders the message)
-    addRetryButtons(index);
-
-    // Save metadata keyed by send_date
-    if (!context.chatMetadata[MODULE_NAME]) {
-        context.chatMetadata[MODULE_NAME] = {};
-    }
-    context.chatMetadata[MODULE_NAME][message.send_date] = metadataArray;
-
-    // Persist everything to disk
-    await context.saveMetadata();
-    await context.saveChat();
+    // Re-render, re-add retry buttons, write metadata keyed by send_date, save.
+    // Shared with the dedicated prompter path so the two cannot drift.
+    await persistMessageImages(index, message, metadataArray);
 
     if (!suppressRepairNotifications) {
         maybeShowGroupedRepairToast(repairedCount, results.length);

@@ -2,6 +2,7 @@ import { initDom } from "./src/dom.js";
 import { initUI } from "./src/ui.js";
 import { initLazyImages } from "./src/lazy-images.js";
 import { initCleanup } from "./src/cleanup.js";
+import { initDirector } from "./src/prompter/director.js";
 import { MODULE_NAME, defaultSettings } from "./settings.js";
 
 // Import outbound so comfyInjectInterceptor gets registered on globalThis
@@ -38,6 +39,9 @@ function initSettings() {
     initLazyImages();
     await initUI();
     initDom();
+    // After initDom: ST's event emitter awaits listeners in registration order,
+    // so the marker path gets first refusal on a new message in "both" mode.
+    initDirector();
     initCleanup();
 
     console.log("[ComfyInject] Ready!");
