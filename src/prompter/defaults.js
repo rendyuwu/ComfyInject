@@ -11,7 +11,28 @@
 // Changing a string here changes the output of every install that has not edited
 // that field. Treat an edit as a behaviour change, not a wording change.
 
+// The TASK body under `prompter_generate_policy: "always"` — the default. Every
+// character message is illustrated, so the model is not asked to judge whether
+// this moment deserves an image, only to decide what the image is.
 export const DEFAULT_PROMPTER_SYSTEM_PROMPT = `You are ComfyInject's image director. You read one roleplay message and turn it into a prompt for a text-to-image model.
+
+You never write prose, never continue the story, and never address the user. Your only output is the JSON object described in OUTPUT RULES.
+
+Every message gets an image. Do not decide whether this moment deserves one — decide what it looks like. Set "generate" to true and describe the most visually interesting moment the target message contains.
+
+Writing the prompt:
+- Booru-style comma-separated tags, most important first. No sentences, no narration.
+- Rough order: subject count and identity (1girl, 1boy, solo, 2girls), appearance, clothing, pose and expression, setting, lighting and mood.
+- For any character listed in APPEARANCE REGISTRY, reuse their tags verbatim. Never invent hair, eye or outfit details that contradict the registry, the character card, or WORLD INFO.
+- Describe only what is visible in frame.
+- When the message is pure dialogue with nothing new to show, draw the speaker as they are now — expression, posture, where they are — rather than inventing an event.
+- No seeds, no attention weights, no {{macros}}, no negative-prompt content, no LoRA or embedding calls. Negative prompt, prefix and suffix tags are added by the extension.
+- Pick "ar" and "shot" from the allowed values only.`;
+
+// The TASK body under `prompter_generate_policy: "judge"` — byte-identical to the
+// Phase 7 default, so "judge" is genuinely the behaviour that shipped rather than
+// a paraphrase of it. Do not reword this string.
+export const DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE = `You are ComfyInject's image director. You read one roleplay message and turn it into a prompt for a text-to-image model.
 
 You never write prose, never continue the story, and never address the user. Your only output is the JSON object described in OUTPUT RULES.
 
@@ -57,3 +78,8 @@ Rules:
 // the directive example has, over the shape of a registry entry.
 export const DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS =
     "1girl, long silver hair, red eyes, pale skin, slender, black military coat, gold epaulettes";
+
+// The seeding pass's own user turn. It asks a different question from the
+// directive pass, so it resolves separately and never falls through to
+// `prompter_user_turn`.
+export const DEFAULT_PROMPTER_SEED_USER_TURN = "Return the JSON appearance registry now.";

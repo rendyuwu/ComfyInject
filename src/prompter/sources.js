@@ -9,6 +9,7 @@
 // probed with typeof, so an older or newer SillyTavern degrades to less material
 // instead of throwing.
 
+import { substituteTrimmed } from "../macros.js";
 import { debugLog } from "./log.js";
 
 // The chat-bound lorebook is stored under this key in chat metadata.
@@ -63,19 +64,23 @@ function readActiveCard(character) {
         debugLog("getCharacterCardFields failed, falling back to the raw card", err);
     }
 
+    // The core resolver returns macro-resolved text; the raw-card fallbacks do
+    // not, so only those are substituted here.
     return {
         key: trim(character.avatar) || trim(character.name) || "character",
         name: trim(character.name) || "Character",
-        description: trim(fields.description) || trim(character.description),
-        personality: trim(fields.personality) || trim(character.personality),
-        scenario: trim(fields.scenario) || trim(character.scenario),
+        description: trim(fields.description) || substituteTrimmed(character.description),
+        personality: trim(fields.personality) || substituteTrimmed(character.personality),
+        scenario: trim(fields.scenario) || substituteTrimmed(character.scenario),
         depthPrompt: trim(fields.charDepthPrompt),
     };
 }
 
 /**
  * A group member's card. getCharacterCardFields() only ever resolves the active
- * character, so members are read raw.
+ * character, so members are read raw — and therefore have to have their macros
+ * expanded here, or the same card text would resolve in a solo chat and arrive as
+ * literal `{{char}}` in a group.
  * @param {any} character
  * @returns {CastMember}
  */
@@ -83,10 +88,10 @@ function readRawCard(character) {
     return {
         key: trim(character.avatar) || trim(character.name) || "character",
         name: trim(character.name) || "Character",
-        description: trim(character.description),
-        personality: trim(character.personality),
-        scenario: trim(character.scenario),
-        depthPrompt: trim(character.data?.extensions?.depth_prompt?.prompt),
+        description: substituteTrimmed(character.description),
+        personality: substituteTrimmed(character.personality),
+        scenario: substituteTrimmed(character.scenario),
+        depthPrompt: substituteTrimmed(character.data?.extensions?.depth_prompt?.prompt),
     };
 }
 

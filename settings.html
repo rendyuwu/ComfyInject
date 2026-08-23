@@ -171,6 +171,21 @@
                 </label>
 
                 <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_generate_policy">Generate Policy</label>
+                    <select id="comfyinject_prompter_generate_policy" class="text_pole">
+                        <option value="always">Always — illustrate every message</option>
+                        <option value="judge">Judge — the prompter decides whether to</option>
+                    </select>
+                </div>
+                <small>
+                    <b>Always</b> is an illustrated log: one image per character message, and the prompter's
+                    only job is deciding what to draw. <b>Judge</b> lets it skip a message it thinks shows
+                    nothing new. User messages never produce an image in either case. Switching this also
+                    switches which text <b>Restore default</b> writes into <b>Prompter Instructions</b> below;
+                    an unedited field is swapped over for you, an edited one is left alone.
+                </small>
+
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
                     <label for="comfyinject_prompter_max_images_per_message" style="width: 150px;">Max images per message</label>
                     <input id="comfyinject_prompter_max_images_per_message" type="number" class="text_pole" min="1" max="4" step="1" style="width: 70px;" />
                     <label for="comfyinject_prompter_max_tags" style="width: 100px;">Max tags</label>

@@ -7,6 +7,7 @@
 // SillyTavern degrades to a smaller prompt instead of throwing.
 
 import { MODULE_NAME } from "../../settings.js";
+import { substituteTrimmed } from "../macros.js";
 import { buildAppearanceSection } from "./appearance.js";
 import { debugLog } from "./log.js";
 import { renderOutputRules } from "./schema.js";
@@ -76,10 +77,14 @@ export function resolveTargetIndex(chat, messageIndex = null) {
 
 /**
  * The prompter's own role and standing instructions.
+ *
+ * Macros are expanded here rather than over the finished prompt: world info,
+ * history and the target message are already resolved by core, and roleplay text
+ * may legitimately contain braces the user wrote in character.
  * @returns {Section[]}
  */
 function buildTaskSection(settings) {
-    const body = trim(settings.prompter_system_prompt);
+    const body = substituteTrimmed(settings.prompter_system_prompt);
     return body ? [{ title: "TASK", body }] : [];
 }
 
@@ -302,7 +307,7 @@ export async function buildPrompterContext({ messageIndex = null } = {}) {
             maxImages: settings.prompter_max_images_per_message,
             // Read live rather than captured at module load, so an edited example
             // takes effect on the next request instead of the next page reload.
-            examplePrompt: settings.prompter_example_prompt,
+            examplePrompt: substituteTrimmed(settings.prompter_example_prompt),
         }),
     });
 
@@ -310,7 +315,7 @@ export async function buildPrompterContext({ messageIndex = null } = {}) {
     // position is the point: a rule stated here is the last thing the model reads
     // and therefore beats a contradicting rule in TASK. Omitted when empty, so a
     // user who never touches it sees no change at all.
-    const finalInstructions = trim(settings.prompter_final_instructions);
+    const finalInstructions = substituteTrimmed(settings.prompter_final_instructions);
     if (finalInstructions) {
         sections.push({ title: "FINAL INSTRUCTIONS", body: finalInstructions });
     }

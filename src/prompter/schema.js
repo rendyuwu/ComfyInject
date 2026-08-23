@@ -207,11 +207,13 @@ function capTags(prompt, maxTags) {
  * @param {object} [options]
  * @param {number} [options.maxImages=1] - Hard cap on returned images
  * @param {number} [options.maxTags=0] - Hard cap on tags per prompt; 0 disables it
+ * @param {"always" | "judge"} [options.policy="judge"] - Whether the model is the judge
  * @returns {{generate: boolean, reason: string, images: Array<{prompt: string, ar: string, shot: string, characters: string[]}>, notes: string[]}}
  */
-export function validateDirective(parsed, { maxImages = 1, maxTags = 0 } = {}) {
+export function validateDirective(parsed, { maxImages = 1, maxTags = 0, policy = "judge" } = {}) {
     const notes = [];
     const cap = Math.max(1, Number(maxImages) || 1);
+    const alwaysGenerate = policy === "always";
 
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         return { generate: false, reason: "", images: [], notes: ["Reply was not a JSON object — treated as skip."] };
@@ -219,8 +221,15 @@ export function validateDirective(parsed, { maxImages = 1, maxTags = 0 } = {}) {
 
     const reason = typeof parsed.reason === "string" ? parsed.reason.trim() : "";
 
-    // A missing or false `generate` is a skip even when images are present.
-    if (parsed.generate !== true) {
+    // Under "judge" a missing or false `generate` is a skip even when images are
+    // present: the model was asked to decide, and it decided.
+    //
+    // Under "always" it is not the judge, so a usable image is taken whatever the
+    // boolean says — the field is near-vestigial there, and discarding good work
+    // over it would be the fail-closed rule misfiring. A reply with no usable
+    // image is still a skip either way: there is nothing to draw, and inventing
+    // something is worse than missing one.
+    if (parsed.generate !== true && !alwaysGenerate) {
         if (Array.isArray(parsed.images) && parsed.images.length > 0) {
             notes.push("generate was not true but images were present — treated as skip.");
         }
@@ -292,8 +301,15 @@ export function validateDirective(parsed, { maxImages = 1, maxTags = 0 } = {}) {
     }
 
     if (images.length === 0) {
-        notes.push("generate was true but no usable image survived validation — treated as skip.");
+        notes.push("No usable image survived validation — treated as skip.");
         return { generate: false, reason, images: [], notes };
+    }
+
+    // An observation rather than a correction: nothing was lost, and the policy
+    // says the boolean is not the model's call. Recorded so the reason a
+    // generate: false reply still produced an image is visible.
+    if (parsed.generate !== true) {
+        notes.push("generate was not true, but the generate policy is always — the returned image was kept.");
     }
 
     return { generate: true, reason, images, notes };

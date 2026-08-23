@@ -2,10 +2,12 @@ import {
     MODULE_NAME,
     defaultSettings,
     DEFAULT_PROMPTER_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE,
     DEFAULT_PROMPTER_EXAMPLE_PROMPT,
     DEFAULT_PROMPTER_USER_TURN,
     DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
     DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+    DEFAULT_PROMPTER_SEED_USER_TURN,
 } from "../settings.js";
 import { openGallery } from "./gallery.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS, fetchWithTimeout, requestTimeoutMs } from "./http.js";
@@ -22,10 +24,14 @@ const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
 const PROMPTER_FIELDS = [
     ["#comfyinject_trigger_mode", "trigger_mode", "select"],
     ["#comfyinject_prompter_structured_mode", "prompter_structured_mode", "select"],
+    ["#comfyinject_prompter_rules_verbosity", "prompter_rules_verbosity", "select"],
+    ["#comfyinject_prompter_generate_policy", "prompter_generate_policy", "select"],
+    ["#comfyinject_prompter_appearance_scope", "prompter_appearance_scope", "select"],
     ["#comfyinject_prompter_lore_mode", "prompter_lore_mode", "select"],
     ["#comfyinject_prompter_max_tokens", "prompter_max_tokens", "int"],
     ["#comfyinject_prompter_timeout_ms", "prompter_timeout_ms", "int"],
     ["#comfyinject_prompter_history_count", "prompter_history_count", "int"],
+    ["#comfyinject_prompter_history_anchor", "prompter_history_anchor", "int"],
     ["#comfyinject_prompter_lore_max_chars", "prompter_lore_max_chars", "int"],
     ["#comfyinject_prompter_max_images_per_message", "prompter_max_images_per_message", "int"],
     ["#comfyinject_prompter_max_tags", "prompter_max_tags", "int"],
@@ -44,18 +50,31 @@ const PROMPTER_FIELDS = [
     ["#comfyinject_prompter_prefill", "prompter_prefill", "text"],
     ["#comfyinject_prompter_seed_system_prompt", "prompter_seed_system_prompt", "text"],
     ["#comfyinject_prompter_seed_example_tags", "prompter_seed_example_tags", "text"],
+    ["#comfyinject_prompter_seed_final_instructions", "prompter_seed_final_instructions", "text"],
+    ["#comfyinject_prompter_seed_user_turn", "prompter_seed_user_turn", "text"],
 ];
+
+// The Prompter Instructions default depends on the generate policy: "judge" has
+// to restore the exact text that shipped in Phase 7, not a paraphrase of it.
+// @param {string} policy
+// @returns {string}
+function systemPromptDefault(policy) {
+    return policy === "judge" ? DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE : DEFAULT_PROMPTER_SYSTEM_PROMPT;
+}
 
 // Restore-default buttons, bound the same declarative way. Each one restores its
 // own field and nothing else, and the default it writes is the same export
 // defaultSettings uses — never a second copy living in this file.
-// [button selector, field selector, settings key, default value, toast text]
+// The default is a function of the live settings rather than a constant, because
+// Prompter Instructions has one default per generate policy.
+// [button selector, field selector, settings key, () => default value, toast text]
 const PROMPTER_RESETS = [
-    ["#comfyinject_prompter_system_prompt_reset", "#comfyinject_prompter_system_prompt", "prompter_system_prompt", DEFAULT_PROMPTER_SYSTEM_PROMPT, "Default prompter instructions restored."],
-    ["#comfyinject_prompter_example_prompt_reset", "#comfyinject_prompter_example_prompt", "prompter_example_prompt", DEFAULT_PROMPTER_EXAMPLE_PROMPT, "Default example image prompt restored."],
-    ["#comfyinject_prompter_user_turn_reset", "#comfyinject_prompter_user_turn", "prompter_user_turn", DEFAULT_PROMPTER_USER_TURN, "Default user turn restored."],
-    ["#comfyinject_prompter_seed_system_prompt_reset", "#comfyinject_prompter_seed_system_prompt", "prompter_seed_system_prompt", DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT, "Default seeding instructions restored."],
-    ["#comfyinject_prompter_seed_example_tags_reset", "#comfyinject_prompter_seed_example_tags", "prompter_seed_example_tags", DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS, "Default seeding example tags restored."],
+    ["#comfyinject_prompter_system_prompt_reset", "#comfyinject_prompter_system_prompt", "prompter_system_prompt", () => systemPromptDefault(getSettings().prompter_generate_policy), "Default prompter instructions restored."],
+    ["#comfyinject_prompter_example_prompt_reset", "#comfyinject_prompter_example_prompt", "prompter_example_prompt", () => DEFAULT_PROMPTER_EXAMPLE_PROMPT, "Default example image prompt restored."],
+    ["#comfyinject_prompter_user_turn_reset", "#comfyinject_prompter_user_turn", "prompter_user_turn", () => DEFAULT_PROMPTER_USER_TURN, "Default user turn restored."],
+    ["#comfyinject_prompter_seed_system_prompt_reset", "#comfyinject_prompter_seed_system_prompt", "prompter_seed_system_prompt", () => DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT, "Default seeding instructions restored."],
+    ["#comfyinject_prompter_seed_example_tags_reset", "#comfyinject_prompter_seed_example_tags", "prompter_seed_example_tags", () => DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS, "Default seeding example tags restored."],
+    ["#comfyinject_prompter_seed_user_turn_reset", "#comfyinject_prompter_seed_user_turn", "prompter_seed_user_turn", () => DEFAULT_PROMPTER_SEED_USER_TURN, "Default seeding user turn restored."],
 ];
 
 /**
@@ -293,6 +312,35 @@ function updatePrefillNote() {
 }
 
 /**
+ * Moves Prompter Instructions to the new policy's shipped default when — and only
+ * when — the field still holds the other policy's shipped default verbatim.
+ *
+ * A pristine field following the policy is what the user means by switching it.
+ * An edited field is theirs, so it is left alone and the panel says so; the
+ * Restore-default button is the way to take the new text deliberately.
+ */
+function syncSystemPromptToPolicy() {
+    const settings = getSettings();
+    const wanted = systemPromptDefault(settings.prompter_generate_policy);
+    const current = String(settings.prompter_system_prompt ?? "");
+    if (current === wanted) return;
+
+    const pristine = current === DEFAULT_PROMPTER_SYSTEM_PROMPT
+        || current === DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE;
+
+    if (!pristine) {
+        toastr.info(
+            "Your edited Prompter Instructions were kept. Use Restore default to take this policy's shipped text.",
+            "ComfyInject"
+        );
+        return;
+    }
+
+    settings.prompter_system_prompt = wanted;
+    $("#comfyinject_prompter_system_prompt").val(wanted);
+}
+
+/**
  * Populates the dedicated prompter fields from current settings.
  */
 function populatePrompterUI() {
@@ -443,6 +491,13 @@ function wirePrompterEvents() {
             // and on there being something to send.
             if (key === "prompter_structured_mode" || key === "prompter_prefill") updatePrefillNote();
 
+            // The two policies ship different TASK text, so a policy change has to
+            // carry the instructions with it — but only when the field is still
+            // pristine. An edited prompt is the user's, and silently rewriting it
+            // is exactly the upgrade failure the Restore-default buttons exist to
+            // avoid, so that case gets a note instead.
+            if (key === "prompter_generate_policy") syncSystemPromptToPolicy();
+
             saveSettings();
         });
     }
@@ -466,8 +521,9 @@ function wirePrompterEvents() {
     });
 
     // Restore-default buttons, one per editable prompt string
-    for (const [button, field, key, value, message] of PROMPTER_RESETS) {
+    for (const [button, field, key, resolveDefault, message] of PROMPTER_RESETS) {
         $(button).on("click", function () {
+            const value = resolveDefault();
             getSettings()[key] = value;
             $(field).val(value);
             saveSettings();

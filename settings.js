@@ -8,18 +8,22 @@
 // every module keeps importing prompter defaults from settings.js.
 import {
     DEFAULT_PROMPTER_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE,
     DEFAULT_PROMPTER_EXAMPLE_PROMPT,
     DEFAULT_PROMPTER_USER_TURN,
     DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
     DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+    DEFAULT_PROMPTER_SEED_USER_TURN,
 } from "./src/prompter/defaults.js";
 
 export {
     DEFAULT_PROMPTER_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_SYSTEM_PROMPT_JUDGE,
     DEFAULT_PROMPTER_EXAMPLE_PROMPT,
     DEFAULT_PROMPTER_USER_TURN,
     DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
     DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+    DEFAULT_PROMPTER_SEED_USER_TURN,
 };
 
 export const MODULE_NAME = "comfyinject";
@@ -144,8 +148,29 @@ export const defaultSettings = Object.freeze({
     // Native degrades to json automatically when the backend rejects it.
     prompter_structured_mode: "native",
 
+    // "always" = the schema JSON is always restated in OUTPUT RULES
+    // "auto"   = it is omitted while the backend is enforcing the schema itself,
+    //            and the prompt is rebuilt with it if the backend refuses
+    // The prose rules and the worked example are sent either way.
+    prompter_rules_verbosity: "always",
+
+    // "always" = every character message is illustrated; the prompter only
+    //            decides what to draw
+    // "judge"  = the prompter decides whether the moment deserves an image
+    // Switching this also switches which shipped default the Prompter
+    // Instructions Restore-default button writes.
+    prompter_generate_policy: "always",
+
     // How many recent messages before the target message to show the prompter.
-    prompter_history_count: 12,
+    // Small on purpose: with the generate policy on "always" nothing needs a
+    // wide window to judge scene changes, and history is the largest volatile
+    // part of every request.
+    prompter_history_count: 6,
+
+    // Hold the history window's start still for this many messages at a time
+    // instead of sliding it by one every turn, so the rendered history is
+    // append-only between jumps and a cached prefix survives. 0 = slide.
+    prompter_history_anchor: 0,
 
     prompter_include_card: true,
     prompter_include_persona: true,
@@ -192,6 +217,14 @@ export const defaultSettings = Object.freeze({
     // same character keeps the same hair, eyes and outfit across images.
     prompter_appearance_enabled: true,
 
+    // "all"     = inject every registry entry on every request
+    // "present" = inject only the cast plus characters named in the target
+    //             message or the history window
+    // "present" saves tokens in a chat with many discovered NPCs, at the cost of
+    // dropping anyone referred to only by pronoun. It also moves the registry
+    // into the volatile half of the request, which forfeits prompt caching.
+    prompter_appearance_scope: "all",
+
     // Spend one extra LLM call on the first dedicated run in a chat, reading the
     // character cards and every bound lorebook to fill the registry. With this
     // off the registry still grows from generated images and can still be
@@ -199,9 +232,14 @@ export const defaultSettings = Object.freeze({
     prompter_appearance_autoseed: true,
 
     // The seeding pass is a second LLM call with its own job, so it gets its own
-    // instructions and its own example rather than sharing the directive pass's.
+    // instructions, its own example, its own last word and its own user turn
+    // rather than sharing the directive pass's. A standing framing usually belongs in
+    // both: the seeding pass runs first, and a refusal there leaves the registry
+    // empty, which degrades every image after it.
     prompter_seed_system_prompt: DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
     prompter_seed_example_tags: DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+    prompter_seed_final_instructions: "",
+    prompter_seed_user_turn: DEFAULT_PROMPTER_SEED_USER_TURN,
 
     // Log the assembled prompt and the raw response to the console.
     prompter_debug: false,

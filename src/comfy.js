@@ -3,6 +3,7 @@ import { resolveSeed } from "./state.js";
 import { saveImageLocally } from "./save.js";
 import { enqueue, queueDepth } from "./queue.js";
 import { fetchWithTimeout, isTimeoutError, requestTimeoutMs } from "./http.js";
+import { substituteTrimmed } from "./macros.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
 
@@ -218,8 +219,10 @@ async function runGeneration({ prompt, ar, shot, seed, messageIndex, bypassSeedL
     // Prepend shot tags to the positive prompt — use locked shot if enabled, otherwise use the LLM's token
     const effectiveShot = settings.shot_lock_enabled ? settings.shot_lock : shot;
     const shotTag = settings.shot_tags?.[effectiveShot] ?? "";
-    const prepend = settings.prepend_prompt?.trim() ?? "";
-    const append = settings.append_prompt?.trim() ?? "";
+    // Macros are expanded here, not on save: these are the user's own strings, so
+    // {{char}} in Prepend Prompt has to mean whoever the chat is about right now.
+    const prepend = substituteTrimmed(settings.prepend_prompt);
+    const append = substituteTrimmed(settings.append_prompt);
 
     // Build the final positive prompt: prepend prompt, shot tags, LLM prompt, append prompt
     const parts = [prepend, shotTag, prompt, append].filter(Boolean);

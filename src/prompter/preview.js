@@ -107,6 +107,7 @@ export async function openPrompterTest(messageIndex = null) {
         ? validateDirective(parsed, {
             maxImages: settings.prompter_max_images_per_message,
             maxTags: settings.prompter_max_tags,
+            policy: settings.prompter_generate_policy,
         })
         : null;
 

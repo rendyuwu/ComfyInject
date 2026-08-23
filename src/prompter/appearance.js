@@ -29,6 +29,7 @@ import {
     DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
     DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
 } from "../../settings.js";
+import { substituteTrimmed } from "../macros.js";
 import { debugLog, warnLog } from "./log.js";
 import { runPrompter } from "./llm.js";
 import { parseDirective } from "./schema.js";
@@ -265,7 +266,7 @@ export function buildAppearanceSection(settings) {
 
     const lines = listRegistryEntries()
         .filter(entry => entry.tags)
-        .map(entry => `${entry.name}: ${entry.tags}`);
+        .map(entry => `${entry.name}: ${substituteTrimmed(entry.tags)}`);
     if (!lines.length) return [];
 
     return [{
@@ -358,7 +359,8 @@ async function buildSeedContext() {
     const cast = listCastMembers();
     if (!cast.length) return null;
 
-    const seedInstructions = trim(settings.prompter_seed_system_prompt) || DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT;
+    const seedInstructions = substituteTrimmed(settings.prompter_seed_system_prompt)
+        || substituteTrimmed(DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT);
     const sections = [{ title: "TASK", body: seedInstructions }];
 
     sections.push({
@@ -390,7 +392,10 @@ async function buildSeedContext() {
         sections.push({ title: `USER PERSONA — ${name}`, body: persona });
     }
 
-    sections.push({ title: "OUTPUT RULES", body: renderSeedOutputRules(settings.prompter_seed_example_tags) });
+    sections.push({
+        title: "OUTPUT RULES",
+        body: renderSeedOutputRules(substituteTrimmed(settings.prompter_seed_example_tags)),
+    });
 
     return {
         systemPrompt: renderSections(sections),

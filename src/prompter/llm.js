@@ -16,6 +16,7 @@
 // both modes, which is what makes a mid-flight degrade work without rebuilding it.
 
 import { MODULE_NAME, DEFAULT_PROMPTER_USER_TURN } from "../../settings.js";
+import { substituteTrimmed } from "../macros.js";
 import { debugLog, warnLog } from "./log.js";
 import { DIRECTIVE_SCHEMA, SCHEMA_NAME, toStrictJsonSchema } from "./schema.js";
 
@@ -383,9 +384,9 @@ export async function runPrompter({
     // then the user's setting, then the shipped default. An empty setting is a
     // mistake rather than a request for no user turn: chat-completion backends
     // need something to answer.
-    const resolvedUserTurn = String(userTurn ?? "").trim()
-        || String(settings.prompter_user_turn ?? "").trim()
-        || DEFAULT_PROMPTER_USER_TURN;
+    const resolvedUserTurn = substituteTrimmed(userTurn)
+        || substituteTrimmed(settings.prompter_user_turn)
+        || substituteTrimmed(DEFAULT_PROMPTER_USER_TURN);
 
     const messages = [
         { role: "system", content: systemPrompt },
