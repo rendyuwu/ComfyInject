@@ -31,6 +31,8 @@ import {
     renderMessageWithSuffix,
     rerenderMessage,
 } from "../dom.js";
+import { isTimeoutError as isFetchTimeout } from "../http.js";
+import { notifyFailure, notifyWarning } from "../notify.js";
 import { ensureRegistrySeeded, growRegistry, resetAppearanceState } from "./appearance.js";
 import { buildPrompterContext } from "./context.js";
 import { getErrorChain, isTimeoutError, runPrompter } from "./llm.js";
@@ -67,16 +69,14 @@ function dedicatedEnabled() {
 }
 
 /**
- * Failure feedback follows the existing marker-repair toast convention: an
+ * Failure feedback follows the shared toast convention in src/notify.js: an
  * automatic run stays silent when the user asked for silence, but an explicitly
  * requested run always answers.
  * @param {string} text
  * @param {boolean} manual
  */
-function notifyFailure(text, manual) {
-    const mode = getSettings()?.repair_toast_mode || "failures";
-    if (!manual && mode === "off") return;
-    toastr.error(text, "ComfyInject");
+function reportFailure(text, manual) {
+    notifyFailure(text, { force: manual });
 }
 
 /**
@@ -108,11 +108,19 @@ async function runDirector(messageIndex, { manual }) {
             built = await buildPrompterContext({ messageIndex });
         } catch (err) {
             debugLog("context build refused", err);
-            if (manual) toastr.warning(err?.message || String(err), "ComfyInject");
+            if (manual) notifyWarning(err?.message || String(err), { force: true });
             return;
         }
 
-        debugLog("prompt assembled", { messageIndex, sections: built.sections.length, chars: built.chars });
+        debugLog("prompt assembled", {
+            messageIndex,
+            sections: built.sections.map(section => ({ title: section.title, chars: section.body.length })),
+            chars: built.chars,
+        });
+        // The assembled prompt in full, not just its shape. Every misbehaving
+        // prompter gets diagnosed here first, and a truncated prompt hides
+        // exactly the section that went wrong.
+        debugLog("system prompt\n", built.systemPrompt);
 
         let result;
         try {
@@ -124,7 +132,7 @@ async function runDirector(messageIndex, { manual }) {
                 return;
             }
             warnLog("prompter request failed", getErrorChain(err));
-            notifyFailure(
+            reportFailure(
                 isTimeoutError(err) ? "The prompter request timed out." : "The prompter request failed.",
                 manual
             );
@@ -138,12 +146,22 @@ async function runDirector(messageIndex, { manual }) {
             parsed = parseDirective(result.payload);
         } catch (err) {
             warnLog("prompter reply could not be parsed", err?.message || err);
-            notifyFailure(err?.message || "The prompter's reply could not be parsed.", manual);
+            reportFailure(err?.message || "The prompter's reply could not be parsed.", manual);
             return;
         }
 
         const validated = validateDirective(parsed, { maxImages: settings.prompter_max_images_per_message });
-        if (validated.notes.length) debugLog("validation notes", validated.notes);
+        debugLog("validated directive", {
+            transport: result.transport,
+            structured: result.structured,
+            generate: validated.generate,
+            reason: validated.reason,
+            images: validated.images,
+            notes: validated.notes,
+        });
+        // Notes mean the reply broke the contract somewhere — a defaulted ar or
+        // shot, a dropped or clamped image. Worth seeing without debug mode on.
+        if (validated.notes.length) warnLog("directive was corrected:", validated.notes.join("; "));
 
         if (!validated.generate) {
             debugLog("decision: skip", { messageIndex, reason: validated.reason });
@@ -229,7 +247,10 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
             console.error("[ComfyInject] Dedicated-path image generation failed:", err);
             const currentIndex = findIndexBySendDate(sendDate);
             if (currentIndex !== -1) rerenderMessage(currentIndex, ctx().chat[currentIndex]);
-            notifyFailure("Image generation failed.", manual);
+            reportFailure(
+                isFetchTimeout(err) ? "ComfyUI did not answer in time." : "Image generation failed.",
+                manual
+            );
             return;
         }
 

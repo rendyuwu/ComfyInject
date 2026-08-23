@@ -438,6 +438,7 @@ export async function seedRegistry({ signal = null } = {}) {
         if (!built) throw new Error("No character card to seed from.");
 
         debugLog("seeding the appearance registry", { cast: built.cast, chars: built.systemPrompt.length });
+        debugLog("seeding prompt\n", built.systemPrompt);
 
         const result = await runPrompter({
             systemPrompt: built.systemPrompt,

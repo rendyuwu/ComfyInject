@@ -2,11 +2,25 @@ import { MODULE_NAME } from "../settings.js";
 import { resolveSeed } from "./state.js";
 import { saveImageLocally } from "./save.js";
 import { enqueue, queueDepth } from "./queue.js";
+import { fetchWithTimeout, isTimeoutError, requestTimeoutMs } from "./http.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
 
 // How long to wait between polls (ms)
 const POLL_INTERVAL_MS = 1000;
+
+// The workflow is a static file served by SillyTavern itself, so it either
+// answers immediately or something is badly wrong.
+const WORKFLOW_TIMEOUT_MS = 15000;
+
+// A single /history poll is cheap; anything slower than this is a stall, and the
+// next poll a second later is a free retry.
+const POLL_TIMEOUT_MS = 15000;
+
+// How many polls in a row may fail before the generation is abandoned. One
+// blip while ComfyUI reloads a model should not lose the job, but a ComfyUI that
+// has gone away should not hold the queue for the full attempt budget either.
+const MAX_CONSECUTIVE_POLL_FAILURES = 5;
 
 /**
  * Gets the current ComfyInject settings from SillyTavern's extension settings.
@@ -25,7 +39,11 @@ function getSettings() {
 async function loadWorkflow() {
     const settings = getSettings();
     const filename = settings.workflow || "comfyinject_default.json";
-    const response = await fetch(`/${EXTENSION_FOLDER}/workflows/${filename}`);
+    const response = await fetchWithTimeout(
+        `/${EXTENSION_FOLDER}/workflows/${filename}`,
+        {},
+        WORKFLOW_TIMEOUT_MS
+    );
     if (!response.ok) {
         throw new Error(`[ComfyInject] Failed to load workflow "${filename}": ${response.status}`);
     }
@@ -60,11 +78,11 @@ function fillWorkflow(workflow, values) {
  * @returns {Promise<string>} The prompt_id returned by ComfyUI
  */
 async function submitPrompt(workflow, host) {
-    const response = await fetch(`${host}/prompt`, {
+    const response = await fetchWithTimeout(`${host}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: workflow }),
-    });
+    }, requestTimeoutMs());
 
     if (!response.ok) {
         throw new Error(`[ComfyInject] Failed to submit prompt: ${response.status}`);
@@ -81,16 +99,44 @@ async function submitPrompt(workflow, host) {
 
 /**
  * Polls /history/{prompt_id} until the image is ready or we time out.
+ *
+ * Each poll carries its own deadline, so a socket that never settles costs one
+ * attempt instead of hanging the queue forever. A run of failed polls means
+ * ComfyUI has gone away and is reported as such rather than as a slow image.
+ *
  * @param {string} promptId - The prompt_id from submitPrompt
  * @param {string} host - ComfyUI host URL
  * @param {number} maxAttempts - Maximum number of poll attempts before giving up
  * @returns {Promise<{filename: string, subfolder: string}>} The filename and subfolder of the generated image
  */
 async function pollForResult(promptId, host, maxAttempts) {
+    const pollTimeout = Math.min(requestTimeoutMs(), POLL_TIMEOUT_MS);
+    let consecutiveFailures = 0;
+    let lastError = null;
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
 
-        const response = await fetch(`${host}/history/${promptId}`);
+        let response;
+        try {
+            response = await fetchWithTimeout(`${host}/history/${promptId}`, {}, pollTimeout);
+        } catch (err) {
+            lastError = err;
+            consecutiveFailures++;
+            console.warn(
+                `[ComfyInject] Poll ${attempt + 1} failed (${consecutiveFailures}/${MAX_CONSECUTIVE_POLL_FAILURES}):`,
+                isTimeoutError(err) ? err.message : err
+            );
+            if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+                throw new Error(
+                    `[ComfyInject] ComfyUI stopped responding while waiting for ${promptId}: ${lastError?.message ?? lastError}`
+                );
+            }
+            continue;
+        }
+
+        consecutiveFailures = 0;
+
         if (!response.ok) continue;
 
         const history = await response.json();

@@ -470,7 +470,12 @@
                         <option value="off">Off</option>
                     </select>
                 </div>
-                <small>Controls toast notifications for repaired or invalid image markers.</small>
+                <small>
+                    Controls toast notifications for repaired or invalid image markers. Failure notices
+                    from the rest of the extension — a failed generation, an image that could not be
+                    saved, a prompter request that timed out — follow the same setting. Anything you
+                    click always answers.
+                </small>
 
                 <hr class="sysHR" />
 
@@ -480,6 +485,20 @@
                     <input id="comfyinject_max_poll_attempts" type="number" class="text_pole" min="1" max="600" step="1" />
                 </div>
                 <small>How many times to poll ComfyUI (1 second apart) before giving up. Default: 180 (3 minutes).</small>
+
+                <hr class="sysHR" />
+
+                <!-- Request Timeout -->
+                <div class="flex-container flexGap5 alignItemsCenter">
+                    <label for="comfyinject_request_timeout_ms">Request Timeout (ms)</label>
+                    <input id="comfyinject_request_timeout_ms" type="number" class="text_pole" min="1000" max="600000" step="1000" />
+                </div>
+                <small>
+                    How long a single network request may hang before it is given up on. Default: 30000
+                    (30 seconds). Poll Attempts counts polls, not time — this is what stops one dead
+                    socket from blocking every image behind it. Image downloads and uploads always get
+                    at least 60 seconds.
+                </small>
 
                 <hr class="sysHR" />
 

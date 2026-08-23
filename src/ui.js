@@ -1,5 +1,6 @@
 import { MODULE_NAME, defaultSettings, DEFAULT_PROMPTER_SYSTEM_PROMPT } from "../settings.js";
 import { openGallery } from "./gallery.js";
+import { DEFAULT_REQUEST_TIMEOUT_MS, fetchWithTimeout, requestTimeoutMs } from "./http.js";
 import { openContextPreview, openPrompterTest } from "./prompter/preview.js";
 import { openAppearanceEditor } from "./prompter/appearance-ui.js";
 import { resetTransportState } from "./prompter/llm.js";
@@ -54,7 +55,11 @@ function saveSettings() {
 async function fetchCheckpoints() {
     const settings = getSettings();
     try {
-        const response = await fetch(`${settings.comfy_host}/object_info/CheckpointLoaderSimple`);
+        const response = await fetchWithTimeout(
+            `${settings.comfy_host}/object_info/CheckpointLoaderSimple`,
+            {},
+            requestTimeoutMs()
+        );
         if (!response.ok) return [];
         const data = await response.json();
         return data?.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0] ?? [];
@@ -71,7 +76,11 @@ async function fetchCheckpoints() {
 async function validateWorkflow(filename) {
     if (!filename || !filename.trim()) return;
     try {
-        const response = await fetch(`/${EXTENSION_FOLDER}/workflows/${filename.trim()}`, { method: "HEAD" });
+        const response = await fetchWithTimeout(
+            `/${EXTENSION_FOLDER}/workflows/${filename.trim()}`,
+            { method: "HEAD" },
+            requestTimeoutMs()
+        );
         if (response.ok) {
             toastr.success(`Workflow "${filename}" found!`, "ComfyInject");
         } else {
@@ -266,6 +275,7 @@ function populateUI() {
     $("#comfyinject_scheduler").val(settings.scheduler);
     $("#comfyinject_denoise").val(settings.denoise);
     $("#comfyinject_max_poll_attempts").val(settings.max_poll_attempts);
+    $("#comfyinject_request_timeout_ms").val(settings.request_timeout_ms ?? DEFAULT_REQUEST_TIMEOUT_MS);
 
     // Local image saving
     $("#comfyinject_save_images_locally").prop("checked", settings.save_images_locally);
@@ -538,6 +548,16 @@ function wireEvents() {
     // Max poll attempts
     $("#comfyinject_max_poll_attempts").on("input", function () {
         getSettings().max_poll_attempts = parseInt($(this).val(), 10);
+        saveSettings();
+    });
+
+    // Request timeout — an unparseable or empty field falls back to the default
+    // rather than storing NaN, which would disable every deadline at once.
+    $("#comfyinject_request_timeout_ms").on("input", function () {
+        const value = parseInt($(this).val(), 10);
+        getSettings().request_timeout_ms = Number.isFinite(value) && value > 0
+            ? value
+            : DEFAULT_REQUEST_TIMEOUT_MS;
         saveSettings();
     });
 

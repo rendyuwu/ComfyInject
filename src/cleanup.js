@@ -1,4 +1,5 @@
 import { MODULE_NAME } from "../settings.js";
+import { fetchWithTimeout, requestTimeoutMs } from "./http.js";
 
 // SillyTavern deletes only the .jsonl when a chat is removed, and CHAT_DELETED
 // fires after the file is already gone — so the chat can no longer be asked
@@ -119,7 +120,7 @@ export function registerSavedImage(imagePath) {
 async function listSurvivingChats(entry) {
     const { getRequestHeaders } = SillyTavern.getContext();
 
-    const response = await fetch("/api/chats/search", {
+    const response = await fetchWithTimeout("/api/chats/search", {
         method: "POST",
         headers: getRequestHeaders(),
         body: JSON.stringify({
@@ -127,7 +128,7 @@ async function listSurvivingChats(entry) {
             avatar_url: entry.groupId ? null : entry.avatar,
             group_id: entry.groupId || null,
         }),
-    });
+    }, requestTimeoutMs());
 
     if (!response.ok) {
         throw new Error(`[ComfyInject] Could not list chats: ${response.status}`);
@@ -154,11 +155,11 @@ async function fetchChat(chatId, entry) {
         ? { id: chatId }
         : { avatar_url: entry.avatar, file_name: chatId };
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
         method: "POST",
         headers: getRequestHeaders(),
         body: JSON.stringify(body),
-    });
+    }, requestTimeoutMs());
 
     if (!response.ok) {
         throw new Error(`[ComfyInject] Could not read chat "${chatId}": ${response.status}`);
@@ -218,11 +219,11 @@ async function collectSurvivingReferences(entry, deletedChatId) {
 async function deleteImage(imagePath) {
     const { getRequestHeaders } = SillyTavern.getContext();
 
-    const response = await fetch("/api/images/delete", {
+    const response = await fetchWithTimeout("/api/images/delete", {
         method: "POST",
         headers: getRequestHeaders(),
         body: JSON.stringify({ path: imagePath }),
-    });
+    }, requestTimeoutMs());
 
     // A missing file is already the desired end state
     if (!response.ok && response.status !== 404) {

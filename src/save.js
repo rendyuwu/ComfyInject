@@ -1,5 +1,7 @@
 import { MODULE_NAME } from "../settings.js";
 import { registerSavedImage } from "./cleanup.js";
+import { fetchWithTimeout, transferTimeoutMs } from "./http.js";
+import { notifyWarning } from "./notify.js";
 
 // Sub-folder used when the chat has no resolvable character or group name.
 const FALLBACK_FOLDER = "ComfyInject";
@@ -54,7 +56,7 @@ function toBaseName(filename) {
  * @returns {Promise<Blob>} The raw image bytes
  */
 async function fetchImageBlob(imageUrl) {
-    const response = await fetch(imageUrl);
+    const response = await fetchWithTimeout(imageUrl, {}, transferTimeoutMs());
     if (!response.ok) {
         throw new Error(`[ComfyInject] Failed to download image: ${response.status}`);
     }
@@ -122,11 +124,11 @@ function blobToBase64(blob) {
 async function uploadImage(base64, format, filename, folder) {
     const { getRequestHeaders } = SillyTavern.getContext();
 
-    const response = await fetch("/api/images/upload", {
+    const response = await fetchWithTimeout("/api/images/upload", {
         method: "POST",
         headers: getRequestHeaders(),
         body: JSON.stringify({ image: base64, format, filename, ch_name: folder }),
-    });
+    }, transferTimeoutMs());
 
     if (!response.ok) {
         throw new Error(`[ComfyInject] Failed to upload image: ${response.status}`);
@@ -192,7 +194,8 @@ export async function saveImageLocally(imageUrl, filename) {
         return path;
     } catch (err) {
         console.error(`[ComfyInject] Could not save image to SillyTavern, keeping the ComfyUI link:`, err);
-        toastr.warning("Could not save the image to SillyTavern. Using the ComfyUI link instead.", "ComfyInject");
+        // The user still has their image, so this notice obeys repair_toast_mode.
+        notifyWarning("Could not save the image to SillyTavern. Using the ComfyUI link instead.");
         return imageUrl;
     }
 }

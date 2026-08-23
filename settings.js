@@ -77,6 +77,13 @@ export const defaultSettings = Object.freeze({
     // Maximum number of 1-second polls before giving up on an image.
     max_poll_attempts: 180,
 
+    // --- Request Timeout ---
+    // Deadline for a single network request, in milliseconds. This bounds the
+    // time one fetch may hang, which max_poll_attempts does not: it only counts
+    // polls. Image downloads and uploads get at least 60 seconds regardless,
+    // since they move real bytes.
+    request_timeout_ms: 30000,
+
     // --- Aspect Ratio Resolutions ---
     // Width x Height in pixels for each AR token the LLM can use.
     resolutions: {

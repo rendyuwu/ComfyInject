@@ -178,7 +178,7 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Max images per message` | Hard cap applied after validation, whatever the model returns. Default: 1. |
 | `Use the appearance registry` | Send the per-chat appearance registry to the prompter. Default: on. See [Appearance Registry](#appearance-registry). |
 | `Seed the registry automatically` | Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards and every bound lorebook. Default: on. |
-| `Debug logging` | Log the assembled prompt and the raw response to the browser console. Default: off. |
+| `Debug logging` | Log the whole prompter round trip to the browser console: the assembled prompt in full and its per-section sizes, the request shape, the raw reply, and the validated directive with any corrections applied to it. Also turns the skip decision into a toast, so you can see the prompter deciding not to draw. Default: off. |
 | `History messages` | How many messages before the target message the prompter sees. Default: 12. |
 | `Include character card` / `user persona` / `author's note` / `running summary` | Which context sections to send. Card, persona and summary default to on; author's note defaults to off. |
 | `World Info` | `Activated entries only` (default) or `Off`. Entries are read in dry-run mode, so the main chat's sticky, cooldown and recursion state is never touched. |
@@ -218,13 +218,24 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 |---|---|
 | `Shot Tags` | Danbooru tags prepended to the prompt for each SHOT token. Fully customizable. |
 
-### Marker Repair Notifications
+### Polling & Timeouts
 
 | Setting | Description |
 |---|---|
-| `Marker Repair Notifications` | Controls toast notifications for repaired or invalid markers. `All repairs` shows successful repaired markers and parse failures. `Parse failures only` shows only invalid markers. `Off` disables marker repair toasts. |
+| `Max Poll Attempts` | How many times ComfyUI is polled, one second apart, before an image is given up on. Default: 180 (about 3 minutes of generation time). |
+| `Request Timeout (ms)` | How long a single network request may hang before it is abandoned. Default: 30000. Image downloads and uploads always get at least 60 seconds, since they move real bytes. |
 
-ComfyInject still repairs many malformed markers automatically even when toast notifications are disabled. Full repair details remain visible in the Image Gallery.
+These two are not the same bound. Poll Attempts counts polls; the timeout bounds the time any one request may spend waiting. Without it a single dead socket would block every image queued behind it, because ComfyUI submissions are deliberately serialized. Five failed polls in a row are reported as "ComfyUI stopped responding" rather than waiting out the full attempt budget, so a ComfyUI that has gone away is not mistaken for a slow one — a single failed poll is still tolerated and retried.
+
+### Notifications
+
+| Setting | Description |
+|---|---|
+| `Marker Repair Notifications` | Controls toast notifications. `All repairs` shows successful repaired markers as well as failures. `Parse failures only` (default) shows failures only. `Off` disables automatic toasts entirely. |
+
+Despite the name, this is ComfyInject's only notification preference, so every automatic failure notice honours it: a failed generation, an image that could not be saved locally, a prompter request that timed out or came back unparseable. Anything you click — Retry, the per-message wand, the tool buttons in settings — always answers, whatever the setting says. Silence in response to a button press would be a bug, not a preference.
+
+ComfyInject still repairs many malformed markers automatically even when toast notifications are disabled. Full repair details remain visible in the Image Gallery, and failures are always logged to the browser console.
 
 > **Note for SDXL users:** Default resolutions are SD1.5 sized (512px). Bump them up — e.g. PORTRAIT to 832x1216.
 

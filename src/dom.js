@@ -1,6 +1,7 @@
 import { MARKER_REGEX, processAllImageMarkers, hasImageMarker } from "./parse.js";
 import { generateImage } from "./comfy.js";
 import { saveLastSeed, getImageData } from "./state.js";
+import { notifyFailure, notifyRepair, notifyWarning, repairToastsEnabled } from "./notify.js";
 import { MODULE_NAME } from "../settings.js";
 
 // Matches every already-injected ComfyInject image in a message's text.
@@ -64,14 +65,6 @@ function markerPathEnabled() {
 }
 
 /**
- * Returns the current marker repair toast mode.
- * @returns {"all" | "failures" | "off"}
- */
-function getRepairToastMode() {
-    return SillyTavern.getContext().extensionSettings[MODULE_NAME]?.repair_toast_mode || "failures";
-}
-
-/**
  * Returns true if a repairMeta object contains any meaningful repair info.
  * Non-canonical formatting alone does not count unless something was actually
  * defaulted, ignored, or flagged.
@@ -104,12 +97,10 @@ function hasMeaningfulRepair(repairMeta) {
  * @param {number} totalCount
  */
 function maybeShowGroupedRepairToast(repairedCount, totalCount) {
-    if (getRepairToastMode() !== "all") return;
     if (repairedCount <= 0) return;
 
-    toastr.warning(
-        `Repaired ${repairedCount}/${totalCount} markers in this message. See Image Gallery for details.`,
-        "ComfyInject"
+    notifyRepair(
+        `Repaired ${repairedCount}/${totalCount} markers in this message. See Image Gallery for details.`
     );
 }
 
@@ -121,7 +112,7 @@ function maybeShowGroupedRepairToast(repairedCount, totalCount) {
  * @param {number} totalCount
  */
 function maybeLogGroupedRepairWarning(messageIndex, repairedCount, totalCount) {
-    if (getRepairToastMode() !== "all") return;
+    if (!repairToastsEnabled()) return;
     if (repairedCount <= 0) return;
 
     console.warn("[ComfyInject] Repaired markers in message:", {
@@ -136,10 +127,7 @@ function maybeLogGroupedRepairWarning(messageIndex, repairedCount, totalCount) {
  * @param {string} errorText
  */
 function maybeShowParseFailureToast(errorText) {
-    const mode = getRepairToastMode();
-    if (mode === "off") return;
-
-    toastr.warning(errorText, "ComfyInject");
+    notifyWarning(errorText);
 }
 
 /**
@@ -149,12 +137,10 @@ function maybeShowParseFailureToast(errorText) {
  * @param {number} repairedMarkers
  */
 function maybeShowBulkRepairSummaryToast(repairedMessages, repairedMarkers) {
-    if (getRepairToastMode() !== "all") return;
     if (repairedMarkers <= 0) return;
 
-    toastr.warning(
-        `Repaired ${repairedMarkers} markers across ${repairedMessages} existing messages. See Image Gallery for details.`,
-        "ComfyInject"
+    notifyRepair(
+        `Repaired ${repairedMarkers} markers across ${repairedMessages} existing messages. See Image Gallery for details.`
     );
 }
 
@@ -164,7 +150,7 @@ function maybeShowBulkRepairSummaryToast(repairedMessages, repairedMarkers) {
  * @param {number} repairedMarkers
  */
 function maybeLogBulkRepairSummaryWarning(repairedMessages, repairedMarkers) {
-    if (getRepairToastMode() !== "all") return;
+    if (!repairToastsEnabled()) return;
     if (repairedMarkers <= 0) return;
 
     console.warn("[ComfyInject] Repaired markers during bulk scan:", {
@@ -463,6 +449,7 @@ async function processMessage(index, options = {}) {
                 messageIndex: index,
                 markerNumber,
                 totalMarkers: results.length,
+                reason: result?.error?.message ?? result?.error ?? null,
             });
 
             message.mes = message.mes.replace(
@@ -599,7 +586,8 @@ async function retryImage(sendDate, imgIndex) {
         });
     } catch (err) {
         console.error(`[ComfyInject] Retry failed for message ${messageIndex} image ${imgIndex}:`, err);
-        toastr.error("Image retry failed.", "ComfyInject");
+        // The user pressed retry, so this always answers whatever the toast mode says.
+        notifyFailure("Image retry failed.", { force: true });
         // Restore retry button
         if (retryBtn) {
             retryBtn.innerHTML = `<i class="fa-solid fa-rotate"></i>`;

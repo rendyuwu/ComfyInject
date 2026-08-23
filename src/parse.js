@@ -444,6 +444,7 @@ function parseMarkerContent(innerContent, messageIndex) {
  *     }
  *   | {
  *       status: "generation_error",
+ *       error: any,
  *       repairMeta: {
  *         defaulted: string[],
  *         duplicateTokens: {
@@ -495,9 +496,12 @@ export async function processAllImageMarkers(text, messageIndex) {
                 shot,
                 repairMeta,
             });
-        } catch {
+        } catch (err) {
+            // The reason is carried out rather than swallowed: a ComfyUI timeout
+            // and a bad checkpoint name used to look identical in the console.
             results.push({
                 status: "generation_error",
+                error: err,
                 repairMeta,
                 rawMarker: match[0],
             });
