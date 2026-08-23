@@ -28,6 +28,7 @@ import {
     MODULE_NAME,
     DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
     DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+    DEFAULT_PROMPTER_SEED_USER_TURN,
 } from "../../settings.js";
 import { substituteTrimmed } from "../macros.js";
 import { debugLog, warnLog } from "./log.js";
@@ -397,6 +398,15 @@ async function buildSeedContext() {
         body: renderSeedOutputRules(substituteTrimmed(settings.prompter_seed_example_tags)),
     });
 
+    // The seeding pass's own last word, and deliberately not shared with the
+    // directive pass's. The two ask different questions: generation policy is
+    // meaningless here, and a standing framing that only reaches the directive pass
+    // leaves the registry empty — which then degrades every image after it.
+    const finalInstructions = substituteTrimmed(settings.prompter_seed_final_instructions);
+    if (finalInstructions) {
+        sections.push({ title: "FINAL INSTRUCTIONS", body: finalInstructions });
+    }
+
     return {
         systemPrompt: renderSections(sections),
         sections,
@@ -454,7 +464,12 @@ export async function seedRegistry({ signal = null } = {}) {
             signal,
             schema: APPEARANCE_SCHEMA,
             schemaName: SEED_SCHEMA_NAME,
-            userTurn: "Return the JSON appearance registry now.",
+            // Resolved here rather than by widening runPrompter's order, so an
+            // emptied seeding turn falls back to the seeding default and never
+            // silently inherits `prompter_user_turn` — which asks for an image
+            // directive, not a registry.
+            userTurn: substituteTrimmed(getSettings().prompter_seed_user_turn)
+                || substituteTrimmed(DEFAULT_PROMPTER_SEED_USER_TURN),
             // A full cast needs more room than a single image directive does.
             maxTokens: Math.max(1024, Number(getSettings().prompter_max_tokens) || 1024),
         });

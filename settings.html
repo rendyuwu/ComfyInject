@@ -347,6 +347,33 @@
                     <small>The example registry entry in the seeding pass's own <b>OUTPUT RULES</b>.</small>
                 </div>
 
+                <div style="margin-top: 8px;">
+                    <label for="comfyinject_prompter_seed_final_instructions">Seeding Final Instructions</label>
+                    <textarea id="comfyinject_prompter_seed_final_instructions" class="text_pole" rows="4"></textarea>
+                    <small>
+                        The seeding pass's own <b>last</b> section, left out entirely when empty. Separate from
+                        <b>Final Instructions</b> on purpose: generation policy means nothing to a pass that
+                        only extracts appearance tags. If you needed a standing framing up there you probably need one
+                        here too — the seeding call runs first, and a refusal leaves the registry empty, which
+                        degrades every image after it.
+                    </small>
+                </div>
+
+                <div style="margin-top: 8px;">
+                    <label for="comfyinject_prompter_seed_user_turn">Seeding User Turn</label>
+                    <textarea id="comfyinject_prompter_seed_user_turn" class="text_pole" rows="2"></textarea>
+                    <div class="flex-container flexGap5" style="margin-top: 4px;">
+                        <div id="comfyinject_prompter_seed_user_turn_reset" class="menu_button menu_button_icon">
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>Restore default</span>
+                        </div>
+                    </div>
+                    <small>
+                        The user message that asks the seeding pass for its reply. Emptying it falls back to the
+                        shipped default rather than to <b>User Turn</b> above, which asks for an image directive.
+                    </small>
+                </div>
+
                 <hr class="sysHR" />
 
                 <!-- Tools -->

@@ -310,6 +310,7 @@ export async function buildPrompterContext({ messageIndex = null } = {}) {
             // Read live rather than captured at module load, so an edited example
             // takes effect on the next request instead of the next page reload.
             examplePrompt: substituteTrimmed(settings.prompter_example_prompt),
+            maxTags: settings.prompter_max_tags,
         }),
     });
 

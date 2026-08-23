@@ -110,10 +110,12 @@ export function toStrictJsonSchema(schema) {
  * @param {object} [options]
  * @param {number} [options.maxImages=1]
  * @param {string} [options.examplePrompt] - The example reply's `prompt` string
+ * @param {number} [options.maxTags=0] - Tag cap to state; 0 states nothing
  * @returns {string}
  */
-export function renderOutputRules({ maxImages = 1, examplePrompt = "" } = {}) {
+export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags = 0 } = {}) {
     const cap = Math.max(1, Number(maxImages) || 1);
+    const tagCap = Math.max(0, Math.floor(Number(maxTags) || 0));
     const example = {
         generate: true,
         reason: "New scene, character just stepped into the rain.",
@@ -141,6 +143,14 @@ export function renderOutputRules({ maxImages = 1, examplePrompt = "" } = {}) {
         `- "ar" must be one of: ${[...VALID_AR].join(", ")}.`,
         `- "shot" must be one of: ${[...VALID_SHOT].join(", ")}.`,
         `- "prompt" is capped at ${MAX_PROMPT_CHARS} characters.`,
+        // Stated as well as enforced. The cap is enforced in validateDirective
+        // because a small model follows instructions poorly — but a silent cap
+        // keeps the first N tags, and "most important first" is a convention, not
+        // a guarantee. A model that ignores instructions is exactly the model that
+        // will bury the setting at tag 22. No line at all when the cap is off.
+        ...(tagCap
+            ? [`- "prompt" must contain at most ${tagCap} comma-separated tags, most important first. Extra tags are discarded.`]
+            : []),
         `- "characters" lists the names of the characters visible in that image.`,
     ].join("\n");
 }
