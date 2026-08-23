@@ -2,27 +2,27 @@
 // These are loaded into SillyTavern's extension settings panel.
 // DO NOT CHANGE THESE VALUES HERE. Instead, change them in the UI.
 
+// The shipped default for every editable prompter string lives in one place, so
+// each one has exactly one copy: `defaultSettings` below and the matching
+// "Restore default" button in the UI both read it from there. Re-exported so
+// every module keeps importing prompter defaults from settings.js.
+import {
+    DEFAULT_PROMPTER_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_EXAMPLE_PROMPT,
+    DEFAULT_PROMPTER_USER_TURN,
+    DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+} from "./src/prompter/defaults.js";
+
+export {
+    DEFAULT_PROMPTER_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_EXAMPLE_PROMPT,
+    DEFAULT_PROMPTER_USER_TURN,
+    DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+};
+
 export const MODULE_NAME = "comfyinject";
-
-// Default system prompt for the dedicated prompter.
-// Kept as its own export so the settings UI can offer a "Restore default" button
-// without ever silently overwriting a prompt the user has edited.
-export const DEFAULT_PROMPTER_SYSTEM_PROMPT = `You are ComfyInject's image director. You read one roleplay message and turn it into a prompt for a text-to-image model.
-
-You never write prose, never continue the story, and never address the user. Your only output is the JSON object described in OUTPUT RULES.
-
-Deciding whether to generate:
-- Generate when the target message establishes or changes something visible: a new scene, a new character, a change of pose, outfit, expression, lighting or location, or a moment that is simply worth illustrating.
-- Skip dialogue that changes nothing visible, skip meta or out-of-character talk, and skip anything that would only repeat the previous image.
-- When in doubt, skip. A missing image costs nothing; a wrong one interrupts the scene.
-
-Writing the prompt:
-- Booru-style comma-separated tags, most important first. No sentences, no narration.
-- Rough order: subject count and identity (1girl, 1boy, solo, 2girls), appearance, clothing, pose and expression, setting, lighting and mood.
-- For any character listed in APPEARANCE REGISTRY, reuse their tags verbatim. Never invent hair, eye or outfit details that contradict the registry, the character card, or WORLD INFO.
-- Describe only what is visible in frame.
-- No seeds, no attention weights, no {{macros}}, no negative-prompt content, no LoRA or embedding calls. Negative prompt, prefix and suffix tags are added by the extension.
-- Pick "ar" and "shot" from the allowed values only.`;
 
 export const defaultSettings = Object.freeze({
 
@@ -160,7 +160,33 @@ export const defaultSettings = Object.freeze({
     // Hard cap applied after validation, whatever the model returns.
     prompter_max_images_per_message: 1,
 
+    // Hard cap on comma-separated tags per image prompt, enforced after the
+    // reply comes back rather than asked for in the prompt — a small model is
+    // also a poorly-instruction-following one. 0 = off.
+    // Only bounds what the prompter writes: prepend_prompt, the shot tag and
+    // append_prompt are added afterwards and are not counted.
+    prompter_max_tags: 0,
+
     prompter_system_prompt: DEFAULT_PROMPTER_SYSTEM_PROMPT,
+
+    // The `prompt` string in the filled example inside OUTPUT RULES. An example
+    // of a good reply outweighs prose about what a good reply looks like, so
+    // this is the field to shorten for a checkpoint that can only draw simple
+    // scenes.
+    prompter_example_prompt: DEFAULT_PROMPTER_EXAMPLE_PROMPT,
+
+    // Rendered as the last section, after OUTPUT RULES. Omitted when empty.
+    // The only user-owned text in the recency-strong position, which is what
+    // makes it the right slot for a rule that has to beat a shipped default.
+    prompter_final_instructions: "",
+
+    // The user message that asks for the reply.
+    prompter_user_turn: DEFAULT_PROMPTER_USER_TURN,
+
+    // Assistant prefill. Only the generateRaw transport supports one, and it is
+    // never sent while native structured output is active — the backend is
+    // already constrained, so a prefill is redundant at best.
+    prompter_prefill: "",
 
     // Include the per-chat appearance registry in the prompter's context, so the
     // same character keeps the same hair, eyes and outfit across images.
@@ -171,6 +197,11 @@ export const defaultSettings = Object.freeze({
     // off the registry still grows from generated images and can still be
     // seeded by hand from the registry editor.
     prompter_appearance_autoseed: true,
+
+    // The seeding pass is a second LLM call with its own job, so it gets its own
+    // instructions and its own example rather than sharing the directive pass's.
+    prompter_seed_system_prompt: DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
+    prompter_seed_example_tags: DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
 
     // Log the assembled prompt and the raw response to the console.
     prompter_debug: false,

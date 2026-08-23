@@ -1,9 +1,17 @@
-import { MODULE_NAME, defaultSettings, DEFAULT_PROMPTER_SYSTEM_PROMPT } from "../settings.js";
+import {
+    MODULE_NAME,
+    defaultSettings,
+    DEFAULT_PROMPTER_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_EXAMPLE_PROMPT,
+    DEFAULT_PROMPTER_USER_TURN,
+    DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+} from "../settings.js";
 import { openGallery } from "./gallery.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS, fetchWithTimeout, requestTimeoutMs } from "./http.js";
 import { openContextPreview, openPrompterTest } from "./prompter/preview.js";
 import { openAppearanceEditor } from "./prompter/appearance-ui.js";
-import { resetTransportState } from "./prompter/llm.js";
+import { getPrefillStatus, resetTransportState } from "./prompter/llm.js";
 import { addDirectButtons } from "./prompter/director.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
@@ -20,6 +28,7 @@ const PROMPTER_FIELDS = [
     ["#comfyinject_prompter_history_count", "prompter_history_count", "int"],
     ["#comfyinject_prompter_lore_max_chars", "prompter_lore_max_chars", "int"],
     ["#comfyinject_prompter_max_images_per_message", "prompter_max_images_per_message", "int"],
+    ["#comfyinject_prompter_max_tags", "prompter_max_tags", "int"],
     ["#comfyinject_prompter_auto", "prompter_auto", "checkbox"],
     ["#comfyinject_prompter_include_card", "prompter_include_card", "checkbox"],
     ["#comfyinject_prompter_include_persona", "prompter_include_persona", "checkbox"],
@@ -29,6 +38,24 @@ const PROMPTER_FIELDS = [
     ["#comfyinject_prompter_appearance_autoseed", "prompter_appearance_autoseed", "checkbox"],
     ["#comfyinject_prompter_debug", "prompter_debug", "checkbox"],
     ["#comfyinject_prompter_system_prompt", "prompter_system_prompt", "text"],
+    ["#comfyinject_prompter_example_prompt", "prompter_example_prompt", "text"],
+    ["#comfyinject_prompter_final_instructions", "prompter_final_instructions", "text"],
+    ["#comfyinject_prompter_user_turn", "prompter_user_turn", "text"],
+    ["#comfyinject_prompter_prefill", "prompter_prefill", "text"],
+    ["#comfyinject_prompter_seed_system_prompt", "prompter_seed_system_prompt", "text"],
+    ["#comfyinject_prompter_seed_example_tags", "prompter_seed_example_tags", "text"],
+];
+
+// Restore-default buttons, bound the same declarative way. Each one restores its
+// own field and nothing else, and the default it writes is the same export
+// defaultSettings uses — never a second copy living in this file.
+// [button selector, field selector, settings key, default value, toast text]
+const PROMPTER_RESETS = [
+    ["#comfyinject_prompter_system_prompt_reset", "#comfyinject_prompter_system_prompt", "prompter_system_prompt", DEFAULT_PROMPTER_SYSTEM_PROMPT, "Default prompter instructions restored."],
+    ["#comfyinject_prompter_example_prompt_reset", "#comfyinject_prompter_example_prompt", "prompter_example_prompt", DEFAULT_PROMPTER_EXAMPLE_PROMPT, "Default example image prompt restored."],
+    ["#comfyinject_prompter_user_turn_reset", "#comfyinject_prompter_user_turn", "prompter_user_turn", DEFAULT_PROMPTER_USER_TURN, "Default user turn restored."],
+    ["#comfyinject_prompter_seed_system_prompt_reset", "#comfyinject_prompter_seed_system_prompt", "prompter_seed_system_prompt", DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT, "Default seeding instructions restored."],
+    ["#comfyinject_prompter_seed_example_tags_reset", "#comfyinject_prompter_seed_example_tags", "prompter_seed_example_tags", DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS, "Default seeding example tags restored."],
 ];
 
 /**
@@ -190,6 +217,7 @@ function populatePrompterProfiles() {
             service.handleDropdown("#comfyinject_prompter_profile_id", settings.prompter_profile_id, (profile) => {
                 getSettings().prompter_profile_id = profile?.id || "";
                 resetTransportState();
+                updatePrefillNote();
                 saveSettings();
             });
             return;
@@ -243,6 +271,28 @@ function populatePrompterPresets() {
 }
 
 /**
+ * States whether a configured prefill would actually be sent. A setting that is
+ * silently ignored reads as a broken field, so the panel says which it is.
+ */
+function updatePrefillNote() {
+    const note = $("#comfyinject_prompter_prefill_note");
+    if (!note.length) return;
+
+    let status;
+    try {
+        status = getPrefillStatus();
+    } catch (err) {
+        status = { active: false, reason: "" };
+    }
+
+    if (!status.reason) {
+        note.text("Only the no-profile transport supports a prefill, and only on requests that are not schema-constrained.");
+        return;
+    }
+    note.text(status.reason);
+}
+
+/**
  * Populates the dedicated prompter fields from current settings.
  */
 function populatePrompterUI() {
@@ -255,6 +305,7 @@ function populatePrompterUI() {
 
     populatePrompterProfiles();
     populatePrompterPresets();
+    updatePrefillNote();
 }
 
 /**
@@ -388,6 +439,10 @@ function wirePrompterEvents() {
             // mode, so switching modes has to add or remove it right away.
             if (key === "trigger_mode") addDirectButtons();
 
+            // Whether a prefill is actually sent depends on the structured mode,
+            // and on there being something to send.
+            if (key === "prompter_structured_mode" || key === "prompter_prefill") updatePrefillNote();
+
             saveSettings();
         });
     }
@@ -399,6 +454,8 @@ function wirePrompterEvents() {
         if (getSettings().prompter_profile_id === value) return;
         getSettings().prompter_profile_id = value;
         resetTransportState();
+        // Selecting a profile is what makes a prefill inert.
+        updatePrefillNote();
         saveSettings();
     });
 
@@ -408,13 +465,15 @@ function wirePrompterEvents() {
         saveSettings();
     });
 
-    // Restore the default prompter instructions
-    $("#comfyinject_prompter_system_prompt_reset").on("click", function () {
-        getSettings().prompter_system_prompt = DEFAULT_PROMPTER_SYSTEM_PROMPT;
-        $("#comfyinject_prompter_system_prompt").val(DEFAULT_PROMPTER_SYSTEM_PROMPT);
-        saveSettings();
-        toastr.success("Default prompter instructions restored.", "ComfyInject");
-    });
+    // Restore-default buttons, one per editable prompt string
+    for (const [button, field, key, value, message] of PROMPTER_RESETS) {
+        $(button).on("click", function () {
+            getSettings()[key] = value;
+            $(field).val(value);
+            saveSettings();
+            toastr.success(message, "ComfyInject");
+        });
+    }
 
     // Tools
     $("#comfyinject_prompter_preview_btn").on("click", function () {

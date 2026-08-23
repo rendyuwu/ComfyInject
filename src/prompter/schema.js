@@ -9,6 +9,7 @@
 // paths can never drift apart.
 
 import { VALID_AR, VALID_SHOT, DEFAULT_AR, DEFAULT_SHOT } from "../parse.js";
+import { DEFAULT_PROMPTER_EXAMPLE_PROMPT } from "../../settings.js";
 
 // Schema name sent to the backend. Some providers surface it in errors.
 export const SCHEMA_NAME = "ComfyInjectDirective";
@@ -100,16 +101,24 @@ export function toStrictJsonSchema(schema) {
  * constraints the validator enforces anyway. Sent in both structured modes —
  * native enforcement can be refused mid-request, and this is what makes the
  * degraded request work without rebuilding the prompt.
- * @param {number} maxImages
+ *
+ * The example prompt is a parameter rather than a constant so an edited setting
+ * takes effect on the next request instead of on the next page reload. This
+ * module deliberately has no ctx() accessor: it is the one the node smoke tests
+ * exercise without a mocked SillyTavern, and that is worth keeping.
+ *
+ * @param {object} [options]
+ * @param {number} [options.maxImages=1]
+ * @param {string} [options.examplePrompt] - The example reply's `prompt` string
  * @returns {string}
  */
-export function renderOutputRules(maxImages) {
+export function renderOutputRules({ maxImages = 1, examplePrompt = "" } = {}) {
     const cap = Math.max(1, Number(maxImages) || 1);
     const example = {
         generate: true,
         reason: "New scene, character just stepped into the rain.",
         images: [{
-            prompt: "1girl, solo, long silver hair, red eyes, black coat, standing, rain, night, city street, neon lights, wet pavement",
+            prompt: String(examplePrompt || "").trim() || DEFAULT_PROMPTER_EXAMPLE_PROMPT,
             ar: DEFAULT_AR,
             shot: DEFAULT_SHOT,
             characters: ["Character name"],
@@ -174,6 +183,22 @@ export function parseDirective(raw) {
 }
 
 /**
+ * Truncates a comma-separated tag list to `maxTags` tags, never mid-tag.
+ * @param {string} prompt
+ * @param {number} maxTags - 0 disables the cap
+ * @returns {{prompt: string, dropped: number, kept: number}}
+ */
+function capTags(prompt, maxTags) {
+    const limit = Math.max(0, Math.floor(Number(maxTags) || 0));
+    if (!limit) return { prompt, dropped: 0, kept: 0 };
+
+    const tags = prompt.split(",").map(tag => tag.trim()).filter(Boolean);
+    if (tags.length <= limit) return { prompt: tags.join(", "), dropped: 0, kept: tags.length };
+
+    return { prompt: tags.slice(0, limit).join(", "), dropped: tags.length - limit, kept: limit };
+}
+
+/**
  * Validates and clamps a parsed reply into something safe to hand to ComfyUI.
  *
  * Fails closed: anything ambiguous becomes a skip rather than a guess.
@@ -181,9 +206,10 @@ export function parseDirective(raw) {
  * @param {any} parsed - Output of parseDirective
  * @param {object} [options]
  * @param {number} [options.maxImages=1] - Hard cap on returned images
+ * @param {number} [options.maxTags=0] - Hard cap on tags per prompt; 0 disables it
  * @returns {{generate: boolean, reason: string, images: Array<{prompt: string, ar: string, shot: string, characters: string[]}>, notes: string[]}}
  */
-export function validateDirective(parsed, { maxImages = 1 } = {}) {
+export function validateDirective(parsed, { maxImages = 1, maxTags = 0 } = {}) {
     const notes = [];
     const cap = Math.max(1, Number(maxImages) || 1);
 
@@ -219,6 +245,23 @@ export function validateDirective(parsed, { maxImages = 1 } = {}) {
         if (prompt.length > MAX_PROMPT_CHARS) {
             prompt = prompt.slice(0, MAX_PROMPT_CHARS).trim();
             notes.push(`Prompt truncated to ${MAX_PROMPT_CHARS} characters.`);
+        }
+
+        // After the character truncation, not before: the character cap exists to
+        // protect fillWorkflow's string substitution, the tag cap to bound scene
+        // complexity. Cutting tags first would leave a fragment behind for the
+        // character cap to slice through mid-tag.
+        const capped = capTags(prompt, maxTags);
+        if (capped.dropped) {
+            notes.push(`Prompt had ${capped.kept + capped.dropped} tags, capped at ${capped.kept}.`);
+        }
+        prompt = capped.prompt;
+
+        // A prompt of nothing but separators survives the emptiness check above
+        // and comes out of the cap empty. Drop it rather than submitting it.
+        if (!prompt) {
+            notes.push("Dropped an image whose prompt held no usable tags.");
+            continue;
         }
 
         let ar = typeof entry.ar === "string" ? entry.ar.trim() : "";

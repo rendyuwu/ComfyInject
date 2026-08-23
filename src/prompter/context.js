@@ -298,8 +298,22 @@ export async function buildPrompterContext({ messageIndex = null } = {}) {
 
     sections.push({
         title: "OUTPUT RULES",
-        body: renderOutputRules(settings.prompter_max_images_per_message),
+        body: renderOutputRules({
+            maxImages: settings.prompter_max_images_per_message,
+            // Read live rather than captured at module load, so an edited example
+            // takes effect on the next request instead of the next page reload.
+            examplePrompt: settings.prompter_example_prompt,
+        }),
     });
+
+    // Last, deliberately. This is the only section the user fully owns, and the
+    // position is the point: a rule stated here is the last thing the model reads
+    // and therefore beats a contradicting rule in TASK. Omitted when empty, so a
+    // user who never touches it sees no change at all.
+    const finalInstructions = trim(settings.prompter_final_instructions);
+    if (finalInstructions) {
+        sections.push({ title: "FINAL INSTRUCTIONS", body: finalInstructions });
+    }
 
     const systemPrompt = renderSections(sections);
     return {

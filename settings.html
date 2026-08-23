@@ -173,7 +173,15 @@
                 <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
                     <label for="comfyinject_prompter_max_images_per_message" style="width: 150px;">Max images per message</label>
                     <input id="comfyinject_prompter_max_images_per_message" type="number" class="text_pole" min="1" max="4" step="1" style="width: 70px;" />
+                    <label for="comfyinject_prompter_max_tags" style="width: 100px;">Max tags</label>
+                    <input id="comfyinject_prompter_max_tags" type="number" class="text_pole" min="0" max="200" step="1" style="width: 70px;" />
                 </div>
+                <small>
+                    <b>Max tags</b> truncates the prompter's tag list at a comma, enforced after the reply
+                    comes back rather than asked for in the prompt. <code>0</code> = off. It bounds only what
+                    the prompter writes — <b>Prepend Prompt</b>, the shot tag and <b>Append Prompt</b> are
+                    added afterwards and are not counted.
+                </small>
 
                 <label class="checkbox_label" for="comfyinject_prompter_appearance_enabled" title="Send the per-chat appearance registry to the prompter so characters keep the same hair, eyes and outfit across images.">
                     <input id="comfyinject_prompter_appearance_enabled" type="checkbox" />
@@ -243,6 +251,85 @@
                             <span>Restore default</span>
                         </div>
                     </div>
+                    <small>Rendered as the <b>TASK</b> section, first. Role and framing.</small>
+                </div>
+
+                <div style="margin-top: 8px;">
+                    <label for="comfyinject_prompter_example_prompt">Example Image Prompt</label>
+                    <textarea id="comfyinject_prompter_example_prompt" class="text_pole" rows="3"></textarea>
+                    <div class="flex-container flexGap5" style="margin-top: 4px;">
+                        <div id="comfyinject_prompter_example_prompt_reset" class="menu_button menu_button_icon">
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>Restore default</span>
+                        </div>
+                    </div>
+                    <small>
+                        The prompt inside the worked example in <b>OUTPUT RULES</b>. An example of a good reply
+                        outweighs instructions describing one — if your checkpoint only handles simple scenes,
+                        shorten this rather than asking for shorter prompts above.
+                    </small>
+                </div>
+
+                <div style="margin-top: 8px;">
+                    <label for="comfyinject_prompter_final_instructions">Final Instructions</label>
+                    <textarea id="comfyinject_prompter_final_instructions" class="text_pole" rows="5"></textarea>
+                    <small>
+                        Rendered as the <b>last</b> section, after <b>OUTPUT RULES</b>. Left out entirely when
+                        empty. This is the recency-strong slot: a rule stated here is the last thing the model
+                        reads, so it beats a contradicting rule in <b>Prompter Instructions</b>.
+                    </small>
+                </div>
+
+                <hr class="sysHR" />
+
+                <!-- Request shape -->
+                <div>
+                    <label for="comfyinject_prompter_user_turn">User Turn</label>
+                    <textarea id="comfyinject_prompter_user_turn" class="text_pole" rows="2"></textarea>
+                    <div class="flex-container flexGap5" style="margin-top: 4px;">
+                        <div id="comfyinject_prompter_user_turn_reset" class="menu_button menu_button_icon">
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>Restore default</span>
+                        </div>
+                    </div>
+                    <small>The whole prompt is one system message; this is the user message that asks for the reply.</small>
+                </div>
+
+                <div style="margin-top: 8px;">
+                    <label for="comfyinject_prompter_prefill">Assistant Prefill</label>
+                    <textarea id="comfyinject_prompter_prefill" class="text_pole" rows="2"></textarea>
+                    <small id="comfyinject_prompter_prefill_note"></small>
+                </div>
+
+                <hr class="sysHR" />
+
+                <!-- Seeding pass -->
+                <div>
+                    <label for="comfyinject_prompter_seed_system_prompt">Seeding Instructions</label>
+                    <textarea id="comfyinject_prompter_seed_system_prompt" class="text_pole" rows="8"></textarea>
+                    <div class="flex-container flexGap5" style="margin-top: 4px;">
+                        <div id="comfyinject_prompter_seed_system_prompt_reset" class="menu_button menu_button_icon">
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>Restore default</span>
+                        </div>
+                    </div>
+                    <small>
+                        The appearance registry's seeding pass is a second, separate call with its own job, so
+                        it has its own instructions. Reached automatically once per chat, and on demand from
+                        <b>Seed from card + lore</b> in the registry editor.
+                    </small>
+                </div>
+
+                <div style="margin-top: 8px;">
+                    <label for="comfyinject_prompter_seed_example_tags">Seeding Example Tags</label>
+                    <textarea id="comfyinject_prompter_seed_example_tags" class="text_pole" rows="2"></textarea>
+                    <div class="flex-container flexGap5" style="margin-top: 4px;">
+                        <div id="comfyinject_prompter_seed_example_tags_reset" class="menu_button menu_button_icon">
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>Restore default</span>
+                        </div>
+                    </div>
+                    <small>The example registry entry in the seeding pass's own <b>OUTPUT RULES</b>.</small>
                 </div>
 
                 <hr class="sysHR" />

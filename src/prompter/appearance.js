@@ -24,7 +24,11 @@
 // point of the registry being editable: a bad automatic guess is fixable by hand
 // instead of by re-rolling the model.
 
-import { MODULE_NAME } from "../../settings.js";
+import {
+    MODULE_NAME,
+    DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
+    DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
+} from "../../settings.js";
 import { debugLog, warnLog } from "./log.js";
 import { runPrompter } from "./llm.js";
 import { parseDirective } from "./schema.js";
@@ -274,16 +278,6 @@ export function buildAppearanceSection(settings) {
 // Seeding
 // ---------------------------------------------------------------------------
 
-const SEED_SYSTEM_PROMPT = `You extract stable physical appearance tags for the characters of a roleplay, so a text-to-image model can draw the same person the same way every time.
-
-Rules:
-- One entry per character in the CAST section. Use each character's name exactly as it appears there.
-- Booru-style comma-separated tags only. No sentences, no narration.
-- Include only what is stable and visible: apparent gender and age, hair colour, length and style, eye colour, skin tone, build, height, distinguishing marks, and the outfit the character normally wears.
-- Do not include pose, expression, camera framing, lighting, setting, weather, mood or quality tags. Those change from image to image and must not be pinned to a character.
-- Do not invent details the source text does not support. Five accurate tags are worth more than twenty guessed ones.
-- Omit a character entirely if the source text says nothing about how they look.`;
-
 /**
  * The seeding call's own output contract — a different job from the per-message
  * directive, so a different schema.
@@ -323,12 +317,18 @@ export const APPEARANCE_SCHEMA = buildAppearanceSchema();
 /**
  * Schema and example as prompt text, for backends that cannot enforce a schema.
  * Sent in both modes so a mid-flight degrade needs no prompt rebuild.
+ *
+ * The example tags are a parameter, read live by the caller, so an edited setting
+ * takes effect on the next seeding pass rather than on the next page reload.
+ *
+ * @param {string} [exampleTags] - The example entry's tag string
  * @returns {string}
  */
-function renderSeedOutputRules() {
+function renderSeedOutputRules(exampleTags = "") {
+    const tags = String(exampleTags || "").trim() || DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS;
     const example = {
         characters: [
-            { name: "Character name", tags: "1girl, long silver hair, red eyes, pale skin, slender, black military coat, gold epaulettes" },
+            { name: "Character name", tags },
         ],
     };
 
@@ -358,7 +358,8 @@ async function buildSeedContext() {
     const cast = listCastMembers();
     if (!cast.length) return null;
 
-    const sections = [{ title: "TASK", body: SEED_SYSTEM_PROMPT }];
+    const seedInstructions = trim(settings.prompter_seed_system_prompt) || DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT;
+    const sections = [{ title: "TASK", body: seedInstructions }];
 
     sections.push({
         title: `CAST (${cast.length} character${cast.length === 1 ? "" : "s"})`,
@@ -389,7 +390,7 @@ async function buildSeedContext() {
         sections.push({ title: `USER PERSONA — ${name}`, body: persona });
     }
 
-    sections.push({ title: "OUTPUT RULES", body: renderSeedOutputRules() });
+    sections.push({ title: "OUTPUT RULES", body: renderSeedOutputRules(settings.prompter_seed_example_tags) });
 
     return {
         systemPrompt: renderSections(sections),

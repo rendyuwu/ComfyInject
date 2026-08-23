@@ -15,13 +15,9 @@
 // prompt-engineered mode — the schema and a filled example are in the prompt in
 // both modes, which is what makes a mid-flight degrade work without rebuilding it.
 
-import { MODULE_NAME } from "../../settings.js";
+import { MODULE_NAME, DEFAULT_PROMPTER_USER_TURN } from "../../settings.js";
 import { debugLog, warnLog } from "./log.js";
 import { DIRECTIVE_SCHEMA, SCHEMA_NAME, toStrictJsonSchema } from "./schema.js";
-
-// The prompt is one big system message; chat-completion backends still want a
-// user turn to answer.
-const USER_TURN = "Return the JSON directive for the TARGET MESSAGE now.";
 
 // Profiles that have already refused schema-constrained output, so a session does
 // not keep paying for the same rejected request. Keyed by transport and profile id.
@@ -139,6 +135,26 @@ export function getTransportInfo() {
  */
 export function canAbortPrompter() {
     return getTransportInfo().transport === "profile";
+}
+
+/**
+ * Whether a configured prefill would actually be sent, and why not when it would
+ * not be. A prefill silently ignored reads as a broken setting, so the settings
+ * panel states the current answer instead of a general caveat.
+ * @returns {{active: boolean, reason: string}}
+ */
+export function getPrefillStatus() {
+    const settings = getSettings();
+    const prefill = String(settings.prompter_prefill ?? "").trim();
+    if (!prefill) return { active: false, reason: "" };
+
+    if (getTransportInfo().transport === "profile") {
+        return { active: false, reason: "Not sent: the Connection Profile transport has no prefill parameter. It only applies when no profile is selected." };
+    }
+    if (settings.prompter_structured_mode !== "json") {
+        return { active: false, reason: "Only sent on requests that are not schema-constrained. With Structured Output on Native that means the fallback after a refusal, and nothing else — switch to Prompt-engineered to use it on every request." };
+    }
+    return { active: true, reason: "Sent with every prompter request." };
 }
 
 /**
@@ -287,7 +303,7 @@ async function sendViaProfile({ messages, profileId, wantNative, signal, timeout
  * prompt-engineered output.
  * @returns {Promise<{payload: string | object, structured: "native" | "json"}>}
  */
-async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, schema, schemaName }) {
+async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, schema, schemaName, prefill }) {
     const { generateRaw } = ctx();
     if (typeof generateRaw !== "function") {
         throw new Error("generateRaw is not available in this SillyTavern build.");
@@ -305,8 +321,18 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, 
             // trimming discards a whole response that happens to open with a
             // character name.
             options.trimNames = false;
+
+            // Never alongside native enforcement: the backend is already
+            // constrained, so a prefill is redundant at best and a contradiction
+            // at worst. Prompt-engineered mode is where it earns its keep.
+            if (prefill) options.prefill = prefill;
         }
-        debugLog("generateRaw request", { structured: useNative ? "native" : "json", maxTokens, turns: messages.length });
+        debugLog("generateRaw request", {
+            structured: useNative ? "native" : "json",
+            maxTokens,
+            turns: messages.length,
+            prefill: !useNative && prefill ? prefill.length : 0,
+        });
         return await raceTimeout(generateRaw(options), timeoutMs);
     };
 
@@ -335,7 +361,7 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, 
  * @param {AbortSignal | null} [params.signal]
  * @param {object} [params.schema] - JSON schema to enforce natively
  * @param {string} [params.schemaName] - Name some providers surface in errors
- * @param {string} [params.userTurn] - The user message that asks for the reply
+ * @param {string | null} [params.userTurn] - Overrides the configured user message
  * @param {number | null} [params.maxTokens] - Overrides the configured budget
  * @returns {Promise<{payload: string | object, transport: string, structured: string, transportReason: string}>}
  */
@@ -344,7 +370,7 @@ export async function runPrompter({
     signal = null,
     schema = DIRECTIVE_SCHEMA,
     schemaName = SCHEMA_NAME,
-    userTurn = USER_TURN,
+    userTurn = null,
     maxTokens = null,
 }) {
     const settings = getSettings();
@@ -353,15 +379,39 @@ export async function runPrompter({
     const timeoutMs = Math.max(1000, Number(settings.prompter_timeout_ms) || 60000);
     const wantNative = settings.prompter_structured_mode !== "json";
 
+    // A caller-supplied turn wins — the seeding pass asks a different question —
+    // then the user's setting, then the shipped default. An empty setting is a
+    // mistake rather than a request for no user turn: chat-completion backends
+    // need something to answer.
+    const resolvedUserTurn = String(userTurn ?? "").trim()
+        || String(settings.prompter_user_turn ?? "").trim()
+        || DEFAULT_PROMPTER_USER_TURN;
+
     const messages = [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userTurn },
+        { role: "user", content: resolvedUserTurn },
     ];
 
     const { transport, profileId, reason } = getTransportInfo();
     if (reason) debugLog("transport", transport, reason);
 
-    const request = { messages, wantNative, timeoutMs, maxTokens: resolvedMaxTokens, schema, schemaName };
+    const prefill = String(settings.prompter_prefill ?? "").trim();
+    if (prefill && transport === "profile") {
+        // ConnectionManagerRequestService.sendRequest has no prefill parameter,
+        // and a trailing assistant turn is not reliably accepted across backends.
+        // Say so rather than dropping it silently.
+        warnLog("prefill is set but the connection-profile transport has no prefill parameter — ignoring it");
+    }
+
+    const request = {
+        messages,
+        wantNative,
+        timeoutMs,
+        maxTokens: resolvedMaxTokens,
+        schema,
+        schemaName,
+        prefill: transport === "profile" ? "" : prefill,
+    };
     const result = transport === "profile"
         ? await sendViaProfile({ ...request, profileId, signal })
         : await sendViaGenerateRaw(request);

@@ -176,6 +176,7 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Timeout (ms)` | Hard timeout per prompter call. Default: 60000. |
 | `Run automatically on new messages` | Fire the prompter on every character message. Default: on. With it off, only the per-message wand button and the tool buttons run it. |
 | `Max images per message` | Hard cap applied after validation, whatever the model returns. Default: 1. |
+| `Max tags` | Hard cap on comma-separated tags per image prompt, truncated at a comma so a tag is never cut in half. `0` (default) turns it off. Enforced after the reply comes back rather than asked for in the prompt. It bounds only what the prompter writes — **Prepend Prompt**, the shot tag and **Append Prompt** are added afterwards and are not counted. |
 | `Use the appearance registry` | Send the per-chat appearance registry to the prompter. Default: on. See [Appearance Registry](#appearance-registry). |
 | `Seed the registry automatically` | Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards and every bound lorebook. Default: on. |
 | `Debug logging` | Log the whole prompter round trip to the browser console: the assembled prompt in full and its per-section sizes, the request shape, the raw reply, and the validated directive with any corrections applied to it. Also turns the skip decision into a toast, so you can see the prompter deciding not to draw. Default: off. |
@@ -183,7 +184,15 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Include character card` / `user persona` / `author's note` / `running summary` | Which context sections to send. Card, persona and summary default to on; author's note defaults to off. |
 | `World Info` | `Activated entries only` (default) or `Off`. Entries are read in dry-run mode, so the main chat's sticky, cooldown and recursion state is never touched. |
 | `Max chars` | Character cap on the World Info section. Default: 4000. |
-| `Prompter Instructions` | The prompter's system prompt, with a **Restore default** button. Your edits are never overwritten on update. |
+| `Prompter Instructions` | The prompter's system prompt, rendered as the **TASK** section, first. Role and framing. |
+| `Example Image Prompt` | The `prompt` string inside the worked example in **OUTPUT RULES**. See [Tuning the prompter](#tuning-the-prompter) — this is the field to change for a checkpoint that can only draw simple scenes. |
+| `Final Instructions` | Free text rendered as the **last** section, after **OUTPUT RULES**. Empty by default, and left out entirely when empty. |
+| `User Turn` | The user message that asks for the reply. The whole assembled prompt is one system message; chat-completion backends still want something to answer. |
+| `Assistant Prefill` | Assistant prefill text. Only applies when no Connection Profile is selected, and only to requests that are not schema-constrained. The panel says which of those you are currently in. Empty by default. |
+| `Seeding Instructions` | The appearance registry's seeding pass has its own job, so it has its own system prompt. |
+| `Seeding Example Tags` | The example registry entry in the seeding pass's own **OUTPUT RULES**. |
+
+Every prompt field above has a **Restore default** button that restores only that field. Your edits are never overwritten on update, and they all survive **Reset Advanced Settings**.
 
 ### Prompt Control
 
@@ -429,12 +438,40 @@ One system message, assembled in this order:
 8. **WORLD INFO**
 9. **RECENT HISTORY** — the last N messages, with the scope stated in the section header so the model knows what it is missing.
 10. **TARGET MESSAGE** — the message being illustrated.
-11. **OUTPUT RULES** — the schema and the hard constraints, last.
+11. **OUTPUT RULES** — the schema and the hard constraints.
+12. **FINAL INSTRUCTIONS** — your **Final Instructions**, last. Omitted entirely when empty.
 
 Two things worth knowing about how that context is read:
 
 - **World Info is read in dry-run mode.** Sticky, cooldown and recursion state in your main chat is never touched, and no `WORLD_INFO_ACTIVATED` event is emitted. The prompter can see your lorebook without disturbing the roleplay's own lore rotation.
 - **ComfyInject's own output is stripped out.** Every `<img>` tag and every `[[IMG: ...]]` marker is removed from the history and from the target message before the prompter sees them, so the prompter never learns to imitate its own past output.
+
+### Tuning the prompter
+
+Two cases need more than **Prompter Instructions**, and both have their own field.
+
+**Your checkpoint can only draw simple scenes.** A small SD1.5 or an anime-tag model falls apart past a handful of tags. Writing *"keep prompts short and simple"* into **Prompter Instructions** usually does nothing, because the worked example in **OUTPUT RULES** immediately below it shows thirteen tags — an example of a good reply outweighs a description of one. Change the example instead:
+
+| Field | Value |
+|---|---|
+| `Example Image Prompt` | `1girl, solo, silver hair, standing, rain, night` |
+| `Max tags` | `10` |
+
+The example teaches the shape; **Max tags** enforces it whatever the model does with the hint. Asking politely is least reliable in exactly the case where it matters most, since a small model is also a poorly-instruction-following one — so the cap is applied to the reply rather than requested in the prompt. It truncates at a comma, so a tag is never cut in half, and a truncation is reported in the console whether or not debug logging is on.
+
+**Your prompter model refuses.** The prompter is a text model asked to describe what a roleplay is actually doing, and on some backends that needs a standing framing. A standing framing's effectiveness depends on its position: it belongs at the end of the prompt, which is what **Final Instructions** is for. Two slots, the same split SillyTavern's own system prompt and post-history instructions use:
+
+- **Prompter Instructions** — role and framing. Read before the reference data it frames.
+- **Final Instructions** — overrides. The last thing the model reads, so a rule stated here beats a contradicting rule above it.
+
+If a rule is not being followed, move it from the first field to the second before rewording it.
+
+Two more things worth knowing:
+
+- **The seeding pass is a separate call** with the same refusal risk and none of the above applied to it. It has its own **Seeding Instructions** and **Seeding Example Tags**. If registry entries come back empty or refused while per-message prompts work fine, that is the pass to look at.
+- **Assistant Prefill** is the narrowest field here. `generateRaw` — the transport used when no Connection Profile is selected — accepts a prefill; `ConnectionManagerRequestService` has no prefill parameter, and a prefill contradicts native structured output anyway, since the backend is already constrained. The panel states whether yours would actually be sent rather than ignoring it quietly. **Prompter Instructions** and **Final Instructions** cover the standing framing case on both transports; reach for a prefill only if they have not.
+
+**Preview Context** shows the result of any of these edits section by section, and costs nothing.
 
 ### Appearance Registry
 

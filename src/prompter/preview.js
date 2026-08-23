@@ -104,7 +104,10 @@ export async function openPrompterTest(messageIndex = null) {
     }
 
     const validated = parsed
-        ? validateDirective(parsed, { maxImages: settings.prompter_max_images_per_message })
+        ? validateDirective(parsed, {
+            maxImages: settings.prompter_max_images_per_message,
+            maxTags: settings.prompter_max_tags,
+        })
         : null;
 
     const summary = [
