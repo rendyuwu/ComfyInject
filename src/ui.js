@@ -40,6 +40,7 @@ const PROMPTER_FIELDS = [
     ["#comfyinject_prompter_timeout_ms", "prompter_timeout_ms", "int"],
     ["#comfyinject_prompter_history_count", "prompter_history_count", "int"],
     ["#comfyinject_prompter_history_anchor", "prompter_history_anchor", "int"],
+    ["#comfyinject_prompter_previous_image_count", "prompter_previous_image_count", "int"],
     ["#comfyinject_prompter_lore_max_chars", "prompter_lore_max_chars", "int"],
     ["#comfyinject_prompter_max_images_per_message", "prompter_max_images_per_message", "int"],
     ["#comfyinject_prompter_max_tags", "prompter_max_tags", "int"],

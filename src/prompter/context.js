@@ -7,12 +7,15 @@
 // SillyTavern degrades to a smaller prompt instead of throwing.
 
 import { MODULE_NAME } from "../../settings.js";
+import { parseImageTags } from "../imgtag.js";
 import { substituteTrimmed } from "../macros.js";
+import { getImageData } from "../state.js";
 import { appearanceSectionIsVolatile, buildAppearanceSection } from "./appearance.js";
 import { debugLog } from "./log.js";
 import { schemaBelongsInPrompt } from "./llm.js";
 import { renderOutputRules } from "./schema.js";
 import { ensureCardsLoaded, getGroupName, listCastMembers, renderSections } from "./sources.js";
+import { parseTagList, stripBannedTags } from "./tags.js";
 
 // Image markers and already-generated <img> tags are stripped from anything the
 // prompter sees. Leaving them in teaches it to imitate the marker syntax it is
@@ -298,6 +301,157 @@ function buildHistorySection(settings, targetIndex) {
     }];
 }
 
+// The largest value prompter_previous_image_count is allowed to take. Three lines
+// of tags is already the point where a model starts treating them as a template
+// rather than as state.
+const MAX_PREVIOUS_IMAGES = 3;
+
+/**
+ * How to read the PREVIOUS IMAGES section.
+ *
+ * Not editable, for the same reason REGISTRY_DISCIPLINE is not: it is an
+ * instruction about how to read a section this extension generates, not a
+ * statement about what the user wants drawn. The user's own wording for wardrobe
+ * carry-over belongs in CONSTRAINTS or FINAL INSTRUCTIONS.
+ *
+ * The three sentences each do a job. "Not a template to copy" is the mitigation
+ * for the section's one real risk. Naming clothing, clothing state, accessories and
+ * injuries is what makes it about state rather than identity. The last sentence
+ * settles the precedence question the three continuity channels would otherwise
+ * leave open.
+ *
+ * @param {number} count - How many image lines follow
+ * @returns {string}
+ */
+function previousImagesDiscipline(count) {
+    return [
+        `The last image${count === 1 ? "" : "s"} generated in this chat, newest first. This is the state`,
+        "the scene was left in, not a template to copy: carry over clothing, clothing state,",
+        "accessories and injuries the story has not since changed, and vary the framing",
+        "rather than repeating it. APPEARANCE REGISTRY governs who a character is; this",
+        "section governs what has happened to her; the story overrides both.",
+    ].join("\n");
+}
+
+/**
+ * Whether a metadata entry may be trusted to describe a given <img> tag.
+ *
+ * The pairing is positional — entry N describes tag N — and that is all the
+ * codebase has: metadata is keyed by send_date, so it does not follow a swipe, and
+ * the marker path replaces a message's entries wholesale.
+ *
+ * Two tiers, because the seed check on its own would never pass. gallery.js:62
+ * guards with `meta.seed === seed`, but neither generation path writes a seed into
+ * its metadata entry — the <img> tag's data-seed is the source of truth (§11.1) —
+ * so only a *retried* image has one to compare. Falling back to a count match is
+ * what keeps the shot label from being permanently absent on fresh images. The
+ * residual hole is a swipe-back, where the counts can match while the entries
+ * describe the other swipe; that costs a stale shot label on an anti-repetition
+ * hint, never a wrong prompt.
+ *
+ * @param {any} meta - The positionally matching metadata entry, if any
+ * @param {number | null} seed - The seed read from the tag
+ * @param {number} entryCount
+ * @param {number} tagCount
+ * @returns {boolean}
+ */
+function metadataDescribesTag(meta, seed, entryCount, tagCount) {
+    if (!meta || typeof meta !== "object") return false;
+    if (Number.isFinite(meta.seed)) return meta.seed === seed;
+    return entryCount === tagCount;
+}
+
+/**
+ * What the last few images actually showed, quoted back as tags.
+ *
+ * The prompter is structurally blind to its own previous output: stripImages()
+ * removes every <img> tag from the history window, from the world info scan and
+ * from the target message, and that strip is correct — leaving the tags in teaches
+ * it to imitate the marker syntax the dedicated path exists to replace. The
+ * consequence is what this section fixes. The one artifact recording exactly what
+ * the last picture showed is its data-prompt, and until now it was the one thing
+ * the prompter never saw. Meanwhile the main roleplay model has had this channel
+ * since before the dedicated path existed (outbound.js), so this is a regression
+ * against marker mode being closed, not a new capability.
+ *
+ * Four things this has to get right:
+ *  - Walk back from targetIndex - 1, never including the target. On a manual re-run
+ *    of a message that already has an image, including it would hand the model the
+ *    prompt it is being asked to replace. getLastSavedSeed() sets the same
+ *    convention for LOCK.
+ *  - Read message.mes, not the swipes array: mes is whatever the current swipe
+ *    holds, so reading it is automatically swipe-correct.
+ *  - Strip banned tags on the way in. Every quoted prompt has already been through
+ *    validateDirective — except in both mode, where a marker-path prompt was
+ *    written by the roleplay model and never validated at all. A banned tag in text
+ *    the prompter reads becomes a banned tag in text the prompter writes, and the
+ *    validator only catches the second one.
+ *  - No macro substitution. These are generated strings, and item K's rule is that
+ *    editable strings are substituted and generated text is not.
+ *
+ * @param {Record<string, any>} settings
+ * @param {number} targetIndex
+ * @returns {Section[]}
+ */
+function buildPreviousImagesSection(settings, targetIndex) {
+    const requested = Math.floor(Number(settings.prompter_previous_image_count) || 0);
+    const count = Math.min(MAX_PREVIOUS_IMAGES, Math.max(0, requested));
+    if (!count) return [];
+
+    const context = ctx();
+    const chat = Array.isArray(context.chat) ? context.chat : [];
+    const store = context.chatMetadata?.[MODULE_NAME] || {};
+    const banned = parseTagList(settings.prompter_banned_tags).fingerprints;
+
+    /** @type {string[]} */
+    const lines = [];
+
+    for (let i = targetIndex - 1; i >= 0 && lines.length < count; i--) {
+        const message = chat[i];
+        if (!message) continue;
+
+        const tags = parseImageTags(message.mes);
+        if (!tags.length) continue;
+
+        // Legacy chats key metadata by array index instead of send_date.
+        const bySendDate = message.send_date ? getImageData(store, message.send_date) : [];
+        const entries = bySendDate.length > 0 ? bySendDate : getImageData(store, i);
+
+        // Newest first within a message too, so a message holding two images
+        // reports the later one first.
+        for (let n = tags.length - 1; n >= 0 && lines.length < count; n--) {
+            const { prompt, seed } = tags[n];
+            const stripped = stripBannedTags(prompt, banned).prompt.trim();
+            if (!stripped) continue;
+
+            const distance = targetIndex - i;
+            const parts = [`${distance} message${distance === 1 ? "" : "s"} ago`];
+
+            const meta = entries[n];
+            if (metadataDescribesTag(meta, seed, entries.length, tags.length)) {
+                // effectiveShot over shot: the shot lock may have overridden what
+                // the model asked for, and this section describes what was drawn.
+                const shot = trim(meta.effectiveShot) || trim(meta.shot);
+                if (shot) parts.push(`shot ${shot}`);
+
+                const who = Array.isArray(meta.characters)
+                    ? meta.characters.map(trim).filter(Boolean).join(", ")
+                    : "";
+                if (who) parts.push(who);
+            }
+
+            lines.push(`- ${parts.join(", ")}: ${stripped}`);
+        }
+    }
+
+    if (!lines.length) return [];
+
+    return [{
+        title: `PREVIOUS IMAGE${lines.length === 1 ? "" : "S"}`,
+        body: [previousImagesDiscipline(lines.length), "", ...lines].join("\n"),
+    }];
+}
+
 export { renderSections };
 
 /**
@@ -342,12 +496,17 @@ export async function buildPrompterContext({ messageIndex = null, structuredMode
     /** @type {Section[]} */
     const volatileSections = [];
 
-    // Built before the registry section, because scoping the registry to who is in
-    // frame needs to know what the model is actually going to read.
+    // Both built before the registry section, because scoping the registry to who
+    // is in frame needs to know what the model is actually going to read. A
+    // character in the last image is in frame by any reasonable reading, so the
+    // previous-image body counts as frame text too.
     const historySections = buildHistorySection(settings, targetIndex);
+    const previousImageSections = buildPreviousImagesSection(settings, targetIndex);
     const appearanceSections = buildAppearanceSection(settings, {
         targetText,
-        historyText: historySections.map(section => section.body).join("\n\n"),
+        historyText: [...historySections, ...previousImageSections]
+            .map(section => section.body)
+            .join("\n\n"),
     });
     const registryIsVolatile = appearanceSectionIsVolatile(settings);
     if (registryIsVolatile && appearanceSections.length) {
@@ -382,6 +541,14 @@ export async function buildPrompterContext({ messageIndex = null, structuredMode
     if (settings.prompter_include_summary) volatileSections.push(...buildSummarySection());
     volatileSections.push(...(await buildWorldInfoSection(settings, targetIndex)));
     volatileSections.push(...historySections);
+
+    // After the history, before the target — a decision, not a default. Last is the
+    // strongest position and is exactly wrong here: the failure mode of this
+    // section is the model copying the previous prompt instead of updating it, and
+    // recency is what would make copying more likely. History, then what the last
+    // frame showed, then the message to illustrate, then the ask. The target stays
+    // adjacent to the ask, which is where the model's attention belongs.
+    volatileSections.push(...previousImageSections);
 
     volatileSections.push({
         title: "TARGET MESSAGE (illustrate this one)",

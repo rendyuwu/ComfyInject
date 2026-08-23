@@ -172,6 +172,18 @@ export const defaultSettings = Object.freeze({
     // append-only between jumps and a cached prefix survives. 0 = slide.
     prompter_history_anchor: 0,
 
+    // Quote this many previously generated image prompts back to the prompter as
+    // the PREVIOUS IMAGES section, so clothing, clothing state, accessories and injuries
+    // carry across images instead of reverting to the registry's outfit. 0 = off,
+    // clamped to 3.
+    //
+    // Off by default because showing a model its last answer is the standard way
+    // to make it repeat itself: the section is worth a real trade, not a free win.
+    // Marker mode has had this channel since before the dedicated path existed —
+    // outbound.js rewrites saved tags back into the main model's context — so this
+    // is dedicated mode catching up rather than new ground.
+    prompter_previous_image_count: 0,
+
     prompter_include_card: true,
     prompter_include_persona: true,
     prompter_include_author_note: false,
