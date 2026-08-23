@@ -30,26 +30,37 @@ export async function openContextPreview(messageIndex = null) {
         return;
     }
 
-    const tokens = await countTokens(built.systemPrompt);
+    const full = `${built.systemPrompt}\n\n${built.volatilePrompt}`;
+    const tokens = await countTokens(full);
     const transport = getTransportInfo();
 
     const body = openOverlay("Prompter Context Preview", [
-        { label: "Copy prompt", icon: "fa-copy", onClick: () => copyText(built.systemPrompt) },
+        { label: "Copy prompt", icon: "fa-copy", onClick: () => copyText(full) },
     ]);
 
     const summary = [
         `Target: message #${built.target.index} (${built.target.name})`,
-        `Sections: ${built.sections.length}`,
+        `Sections: ${built.sections.length} — ${built.stable.length} stable, ${built.volatile.length} volatile`,
+        `Stable block (system): ${built.systemPrompt.length.toLocaleString()} chars — cacheable, byte-identical between turns`,
+        `Volatile block (user): ${built.volatilePrompt.length.toLocaleString()} chars — changes every message`,
         `Total: ${built.chars.toLocaleString()} chars, ${tokens.count.toLocaleString()} tokens${tokens.estimated ? " (estimated)" : ""}`,
         `Transport: ${transport.transport}${transport.reason ? ` — ${transport.reason}` : ""}`,
         `Abort supported: ${canAbortPrompter() ? "yes" : "no"}`,
     ];
 
+    const renderGroup = (/** @type {string} */ label, /** @type {any[]} */ sections) => `
+        <div style="margin: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.6;">
+            ${escapeHtml(label)}
+        </div>
+        ${sections.map(section => renderBlock(section.title, section.body, `${section.body.length.toLocaleString()} chars`)).join("")}
+    `;
+
     body.innerHTML = `
         <div style="margin-bottom: 12px; font-size: 13px; line-height: 1.6; opacity: 0.9;">
             ${summary.map(line => escapeHtml(line)).join("<br />")}
         </div>
-        ${built.sections.map(section => renderBlock(section.title, section.body, `${section.body.length.toLocaleString()} chars`)).join("")}
+        ${renderGroup("messages[0] — system, stable", built.stable)}
+        ${renderGroup("messages[1] — user, volatile", built.volatile)}
     `;
 }
 
@@ -74,7 +85,7 @@ export async function openPrompterTest(messageIndex = null) {
 
     let result;
     try {
-        result = await runPrompter({ systemPrompt: built.systemPrompt });
+        result = await runPrompter({ messages: built.messages });
     } catch (err) {
         const chain = getErrorChain(err);
         const timedOut = isTimeoutError(err);

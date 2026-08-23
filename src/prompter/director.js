@@ -49,6 +49,25 @@ let inFlight = false;
 /** @type {AbortController | null} */
 let controller = null;
 
+// The previous request's stable block, so the debug log can say whether the
+// cached prefix survived. Tracked here rather than in the builder because the
+// preview tools build contexts too, and counting those would report invalidations
+// that never reached a backend.
+/** @type {string | null} */
+let lastStableBlock = null;
+
+/**
+ * Records this request's stable block and reports whether it is byte-identical to
+ * the previous one. The first request in a chat is neither — it is the write.
+ * @param {string} text
+ * @returns {boolean | "first"}
+ */
+function trackStableBlock(text) {
+    const unchanged = lastStableBlock === null ? "first" : lastStableBlock === text;
+    lastStableBlock = text;
+    return unchanged;
+}
+
 /** @returns {any} */
 function ctx() {
     return SillyTavern.getContext();
@@ -116,15 +135,23 @@ async function runDirector(messageIndex, { manual }) {
             messageIndex,
             sections: built.sections.map(section => ({ title: section.title, chars: section.body.length })),
             chars: built.chars,
+            // The two block sizes and whether the stable half is byte-identical to
+            // the last request's in this chat. Without these the cache-aware
+            // layout is unfalsifiable, and a regression that quietly re-breaks the
+            // prefix would be invisible.
+            stableChars: built.systemPrompt.length,
+            volatileChars: built.volatilePrompt.length,
+            stableBlockUnchanged: trackStableBlock(built.systemPrompt),
         });
         // The assembled prompt in full, not just its shape. Every misbehaving
         // prompter gets diagnosed here first, and a truncated prompt hides
         // exactly the section that went wrong.
-        debugLog("system prompt\n", built.systemPrompt);
+        debugLog("stable block (system message)\n", built.systemPrompt);
+        debugLog("volatile block (user message)\n", built.volatilePrompt);
 
         let result;
         try {
-            result = await runPrompter({ systemPrompt: built.systemPrompt, signal });
+            result = await runPrompter({ messages: built.messages, signal });
         } catch (err) {
             // An abort is a skip, not an error — no toast, no partial image.
             if (signal.aborted) {
@@ -332,6 +359,7 @@ function onChatChanged() {
         controller = null;
     }
     inFlight = false;
+    lastStableBlock = null;
     resetAppearanceState();
     scheduleDirectButtons();
 }

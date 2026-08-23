@@ -447,7 +447,10 @@ export async function seedRegistry({ signal = null } = {}) {
         debugLog("seeding prompt\n", built.systemPrompt);
 
         const result = await runPrompter({
-            systemPrompt: built.systemPrompt,
+            // One system message, unlike the directive pass: the seeding call runs
+            // once per chat, so there is no prefix to reuse and nothing to gain
+            // from splitting it.
+            messages: [{ role: "system", content: built.systemPrompt }],
             signal,
             schema: APPEARANCE_SCHEMA,
             schemaName: SEED_SCHEMA_NAME,

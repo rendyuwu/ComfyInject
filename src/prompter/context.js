@@ -23,7 +23,8 @@ const MARKER_REGEX = /\[\[IMG:\s*(.+?)\s*\]\]/gs;
 
 /**
  * @typedef {{ title: string, body: string }} Section
- * @typedef {{ systemPrompt: string, sections: Section[], chars: number, target: { index: number, name: string, text: string } }} BuiltContext
+ * @typedef {{ role: string, content: string }} Message
+ * @typedef {{ messages: Message[], stable: Section[], volatile: Section[], sections: Section[], systemPrompt: string, volatilePrompt: string, chars: number, target: { index: number, name: string, text: string } }} BuiltContext
  */
 
 /** @returns {any} */
@@ -252,11 +253,19 @@ function buildHistorySection(settings, targetIndex) {
 export { renderSections };
 
 /**
- * Builds the prompter's full system prompt.
+ * Builds the prompter's request as two messages.
  *
- * Section order follows one rule: reference data first, standing orders last,
- * because recency beats everything else when the model has to choose between an
- * instruction and its own habits.
+ * The split is on the static/volatile line, and it is a cost decision as much as
+ * a stylistic one. Everything that does not change from message to message —
+ * role, cast, persona, output contract — goes in the system message, so a backend
+ * that caches prompt prefixes can actually read that cache back. Everything that
+ * changes every turn goes in the user message, where it belongs anyway: the
+ * conventional shape is instructions in the system message, material in the user
+ * message, and that is what most backends are tuned for.
+ *
+ * Section order within each block still follows the one rule: reference data
+ * first, standing orders last. FINAL INSTRUCTIONS remains the last thing the
+ * model reads before the ask.
  *
  * @param {object} [options]
  * @param {number | null} [options.messageIndex] - Message to illustrate. Defaults to the newest visible one.
@@ -280,28 +289,21 @@ export async function buildPrompterContext({ messageIndex = null } = {}) {
     const targetName = targetMessage.name || (targetMessage.is_user ? "User" : "Character");
 
     /** @type {Section[]} */
-    const sections = [];
+    const stable = [];
+    /** @type {Section[]} */
+    const volatileSections = [];
 
-    sections.push(...buildTaskSection(settings));
-    sections.push(...buildAppearanceSection(settings));
-    sections.push(...buildSessionSection());
+    stable.push(...buildTaskSection(settings));
+    stable.push(...buildAppearanceSection(settings));
+    stable.push(...buildSessionSection());
 
     if (settings.prompter_include_card) {
-        sections.push(...(context.groupId ? buildGroupCardSection() : buildSoloCardSection()));
+        stable.push(...(context.groupId ? buildGroupCardSection() : buildSoloCardSection()));
     }
-    if (settings.prompter_include_persona) sections.push(...buildPersonaSection());
-    if (settings.prompter_include_author_note) sections.push(...buildAuthorNoteSection());
-    if (settings.prompter_include_summary) sections.push(...buildSummarySection());
+    if (settings.prompter_include_persona) stable.push(...buildPersonaSection());
+    if (settings.prompter_include_author_note) stable.push(...buildAuthorNoteSection());
 
-    sections.push(...(await buildWorldInfoSection(settings, targetIndex)));
-    sections.push(...buildHistorySection(settings, targetIndex));
-
-    sections.push({
-        title: "TARGET MESSAGE (illustrate this one)",
-        body: `${targetName}: ${targetText}`,
-    });
-
-    sections.push({
+    stable.push({
         title: "OUTPUT RULES",
         body: renderOutputRules({
             maxImages: settings.prompter_max_images_per_message,
@@ -311,20 +313,40 @@ export async function buildPrompterContext({ messageIndex = null } = {}) {
         }),
     });
 
+    if (settings.prompter_include_summary) volatileSections.push(...buildSummarySection());
+    volatileSections.push(...(await buildWorldInfoSection(settings, targetIndex)));
+    volatileSections.push(...buildHistorySection(settings, targetIndex));
+
+    volatileSections.push({
+        title: "TARGET MESSAGE (illustrate this one)",
+        body: `${targetName}: ${targetText}`,
+    });
+
     // Last, deliberately. This is the only section the user fully owns, and the
     // position is the point: a rule stated here is the last thing the model reads
-    // and therefore beats a contradicting rule in TASK. Omitted when empty, so a
-    // user who never touches it sees no change at all.
+    // before the ask, and therefore beats a contradicting rule in TASK. Omitted
+    // when empty, so a user who never touches it sees no change at all.
     const finalInstructions = substituteTrimmed(settings.prompter_final_instructions);
     if (finalInstructions) {
-        sections.push({ title: "FINAL INSTRUCTIONS", body: finalInstructions });
+        volatileSections.push({ title: "FINAL INSTRUCTIONS", body: finalInstructions });
     }
 
-    const systemPrompt = renderSections(sections);
+    const systemPrompt = renderSections(stable);
+    const volatilePrompt = renderSections(volatileSections);
+
     return {
+        messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: volatilePrompt },
+        ],
+        stable,
+        volatile: volatileSections,
+        // The concatenation, so the preview and anything else that just wants
+        // "every section in order" keeps working.
+        sections: [...stable, ...volatileSections],
         systemPrompt,
-        sections,
-        chars: systemPrompt.length,
+        volatilePrompt,
+        chars: systemPrompt.length + volatilePrompt.length,
         target: { index: targetIndex, name: targetName, text: targetText },
     };
 }

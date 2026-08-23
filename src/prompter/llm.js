@@ -351,6 +351,39 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, 
 }
 
 /**
+ * Appends the ask to the request's last user message, or adds one if the caller
+ * built nothing but a system message.
+ *
+ * A caller-supplied turn wins — the seeding pass asks a different question — then
+ * the user's setting, then the shipped default. An empty setting is a mistake
+ * rather than a request for no user turn: chat-completion backends need something
+ * to answer.
+ *
+ * @param {Message[]} messages
+ * @param {string | null} userTurn
+ * @returns {Message[]}
+ */
+function withUserTurn(messages, userTurn) {
+    const settings = getSettings();
+    const resolved = substituteTrimmed(userTurn)
+        || substituteTrimmed(settings.prompter_user_turn)
+        || substituteTrimmed(DEFAULT_PROMPTER_USER_TURN);
+
+    const out = messages.map(message => ({ ...message }));
+    const last = out[out.length - 1];
+    if (last && last.role === "user") {
+        last.content = last.content ? `${last.content}\n\n${resolved}` : resolved;
+    } else {
+        out.push({ role: "user", content: resolved });
+    }
+    return out;
+}
+
+/**
+ * @typedef {{ role: string, content: string }} Message
+ */
+
+/**
  * Runs one prompter request.
  *
  * The schema is a parameter rather than a constant because the dedicated path
@@ -358,7 +391,7 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, 
  * image directive, and the appearance registry seeding pass.
  *
  * @param {object} params
- * @param {string} params.systemPrompt - Output of buildPrompterContext()
+ * @param {Message[]} params.messages - Output of buildPrompterContext(). The user turn is appended to the last user message.
  * @param {AbortSignal | null} [params.signal]
  * @param {object} [params.schema] - JSON schema to enforce natively
  * @param {string} [params.schemaName] - Name some providers surface in errors
@@ -367,7 +400,7 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, 
  * @returns {Promise<{payload: string | object, transport: string, structured: string, transportReason: string}>}
  */
 export async function runPrompter({
-    systemPrompt,
+    messages: builtMessages,
     signal = null,
     schema = DIRECTIVE_SCHEMA,
     schemaName = SCHEMA_NAME,
@@ -380,18 +413,7 @@ export async function runPrompter({
     const timeoutMs = Math.max(1000, Number(settings.prompter_timeout_ms) || 60000);
     const wantNative = settings.prompter_structured_mode !== "json";
 
-    // A caller-supplied turn wins — the seeding pass asks a different question —
-    // then the user's setting, then the shipped default. An empty setting is a
-    // mistake rather than a request for no user turn: chat-completion backends
-    // need something to answer.
-    const resolvedUserTurn = substituteTrimmed(userTurn)
-        || substituteTrimmed(settings.prompter_user_turn)
-        || substituteTrimmed(DEFAULT_PROMPTER_USER_TURN);
-
-    const messages = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: resolvedUserTurn },
-    ];
+    const messages = withUserTurn(Array.isArray(builtMessages) ? builtMessages : [], userTurn);
 
     const { transport, profileId, reason } = getTransportInfo();
     if (reason) debugLog("transport", transport, reason);
