@@ -151,7 +151,15 @@ async function runDirector(messageIndex, { manual }) {
 
         let result;
         try {
-            result = await runPrompter({ messages: built.messages, signal });
+            result = await runPrompter({
+                messages: built.messages,
+                signal,
+                // Only reached when the backend refuses schema-constrained output
+                // and the schema JSON was being left out of the prompt because of
+                // it. The retried request carries the full rules.
+                rebuild: async (structuredMode) =>
+                    (await buildPrompterContext({ messageIndex, structuredMode })).messages,
+            });
         } catch (err) {
             // An abort is a skip, not an error — no toast, no partial image.
             if (signal.aborted) {

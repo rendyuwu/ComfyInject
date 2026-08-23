@@ -85,7 +85,11 @@ export async function openPrompterTest(messageIndex = null) {
 
     let result;
     try {
-        result = await runPrompter({ messages: built.messages });
+        result = await runPrompter({
+            messages: built.messages,
+            rebuild: async (structuredMode) =>
+                (await buildPrompterContext({ messageIndex, structuredMode })).messages,
+        });
     } catch (err) {
         const chain = getErrorChain(err);
         const timedOut = isTimeoutError(err);

@@ -111,9 +111,10 @@ export function toStrictJsonSchema(schema) {
  * @param {number} [options.maxImages=1]
  * @param {string} [options.examplePrompt] - The example reply's `prompt` string
  * @param {number} [options.maxTags=0] - Tag cap to state; 0 states nothing
+ * @param {boolean} [options.includeSchema=true] - Restate the schema JSON in the prompt
  * @returns {string}
  */
-export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags = 0 } = {}) {
+export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags = 0, includeSchema = true } = {}) {
     const cap = Math.max(1, Number(maxImages) || 1);
     const tagCap = Math.max(0, Math.floor(Number(maxTags) || 0));
     const example = {
@@ -129,9 +130,12 @@ export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags =
 
     return [
         "Return exactly one JSON object and nothing else. No prose before or after it, no code fence.",
-        "",
-        "Schema:",
-        JSON.stringify(DIRECTIVE_SCHEMA, null, 2),
+        // About 1,900 characters. Redundant while the backend is enforcing the
+        // schema itself, and on a small local model it is 1,900 characters of
+        // noise competing with the instructions — worst exactly where the feature
+        // is needed most. The prose rules and the worked example always stay: the
+        // example is the highest-leverage part and costs a tenth as much.
+        ...(includeSchema ? ["", "Schema:", JSON.stringify(DIRECTIVE_SCHEMA, null, 2)] : []),
         "",
         "Example of a filled reply:",
         JSON.stringify(example, null, 2),

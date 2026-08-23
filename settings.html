@@ -156,6 +156,21 @@
                 <small>Native falls back to prompt-engineered on its own if the backend refuses a schema.</small>
 
                 <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_rules_verbosity">Schema in Prompt</label>
+                    <select id="comfyinject_prompter_rules_verbosity" class="text_pole">
+                        <option value="always">Always — restate it every request</option>
+                        <option value="auto">Auto — only when the backend is not enforcing it</option>
+                    </select>
+                </div>
+                <small>
+                    The schema JSON is about 1,900 characters. On <b>Auto</b> it is left out of
+                    <b>OUTPUT RULES</b> while the backend enforces the schema itself, and the request is
+                    rebuilt with it if the backend refuses mid-flight. The prose rules and the worked example
+                    are always sent. Worth turning on for a small local prompter model, where those characters
+                    are noise competing with the instructions.
+                </small>
+
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
                     <label for="comfyinject_prompter_max_tokens" style="width: 110px;">Max Tokens</label>
                     <input id="comfyinject_prompter_max_tokens" type="number" class="text_pole" min="64" max="8192" step="64" style="width: 90px;" />
                     <label for="comfyinject_prompter_timeout_ms" style="width: 90px;">Timeout (ms)</label>

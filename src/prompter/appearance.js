@@ -32,7 +32,7 @@ import {
 } from "../../settings.js";
 import { substituteTrimmed } from "../macros.js";
 import { debugLog, warnLog } from "./log.js";
-import { runPrompter } from "./llm.js";
+import { runPrompter, schemaBelongsInPrompt } from "./llm.js";
 import { parseDirective } from "./schema.js";
 import { ensureCardsLoaded, listCastMembers, readBoundLore, renderSections } from "./sources.js";
 
@@ -323,10 +323,12 @@ export const APPEARANCE_SCHEMA = buildAppearanceSchema();
  * The example tags are a parameter, read live by the caller, so an edited setting
  * takes effect on the next seeding pass rather than on the next page reload.
  *
- * @param {string} [exampleTags] - The example entry's tag string
+ * @param {object} [options]
+ * @param {string} [options.exampleTags] - The example entry's tag string
+ * @param {boolean} [options.includeSchema=true] - Restate the schema JSON in the prompt
  * @returns {string}
  */
-function renderSeedOutputRules(exampleTags = "") {
+function renderSeedOutputRules({ exampleTags = "", includeSchema = true } = {}) {
     const tags = String(exampleTags || "").trim() || DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS;
     const example = {
         characters: [
@@ -336,9 +338,9 @@ function renderSeedOutputRules(exampleTags = "") {
 
     return [
         "Return exactly one JSON object and nothing else. No prose before or after it, no code fence.",
-        "",
-        "Schema:",
-        JSON.stringify(APPEARANCE_SCHEMA, null, 2),
+        // Omitted while the backend enforces the schema itself, on the same
+        // reasoning as the directive pass's. The example always stays.
+        ...(includeSchema ? ["", "Schema:", JSON.stringify(APPEARANCE_SCHEMA, null, 2)] : []),
         "",
         "Example of a filled reply:",
         JSON.stringify(example, null, 2),
@@ -351,9 +353,11 @@ function renderSeedOutputRules(exampleTags = "") {
 
 /**
  * Builds the seeding prompt from the cast and every bound lorebook.
+ * @param {object} [options]
+ * @param {"native" | "json" | null} [options.structuredMode] - Forces whether OUTPUT RULES restates the schema
  * @returns {Promise<{systemPrompt: string, sections: Array<{title: string, body: string}>, cast: string[]} | null>}
  */
-async function buildSeedContext() {
+async function buildSeedContext({ structuredMode = null } = {}) {
     await ensureCardsLoaded();
 
     const settings = getSettings();
@@ -395,7 +399,10 @@ async function buildSeedContext() {
 
     sections.push({
         title: "OUTPUT RULES",
-        body: renderSeedOutputRules(substituteTrimmed(settings.prompter_seed_example_tags)),
+        body: renderSeedOutputRules({
+            exampleTags: substituteTrimmed(settings.prompter_seed_example_tags),
+            includeSchema: schemaBelongsInPrompt(structuredMode),
+        }),
     });
 
     // The seeding pass's own last word, and deliberately not shared with the
@@ -470,6 +477,11 @@ export async function seedRegistry({ signal = null } = {}) {
             // directive, not a registry.
             userTurn: substituteTrimmed(getSettings().prompter_seed_user_turn)
                 || substituteTrimmed(DEFAULT_PROMPTER_SEED_USER_TURN),
+            // Put the schema JSON back if the backend refuses to enforce it.
+            rebuild: async (structuredMode) => {
+                const rebuilt = await buildSeedContext({ structuredMode });
+                return rebuilt ? [{ role: "system", content: rebuilt.systemPrompt }] : [];
+            },
             // A full cast needs more room than a single image directive does.
             maxTokens: Math.max(1024, Number(getSettings().prompter_max_tokens) || 1024),
         });

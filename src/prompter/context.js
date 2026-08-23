@@ -10,6 +10,7 @@ import { MODULE_NAME } from "../../settings.js";
 import { substituteTrimmed } from "../macros.js";
 import { buildAppearanceSection } from "./appearance.js";
 import { debugLog } from "./log.js";
+import { schemaBelongsInPrompt } from "./llm.js";
 import { renderOutputRules } from "./schema.js";
 import { ensureCardsLoaded, getGroupName, listCastMembers, renderSections } from "./sources.js";
 
@@ -269,10 +270,11 @@ export { renderSections };
  *
  * @param {object} [options]
  * @param {number | null} [options.messageIndex] - Message to illustrate. Defaults to the newest visible one.
+ * @param {"native" | "json" | null} [options.structuredMode] - Forces whether OUTPUT RULES restates the schema. Used by the rebuild on a mid-flight refusal.
  * @returns {Promise<BuiltContext>}
  * @throws {Error} When there is no chat, or nothing illustratable in it
  */
-export async function buildPrompterContext({ messageIndex = null } = {}) {
+export async function buildPrompterContext({ messageIndex = null, structuredMode = null } = {}) {
     await ensureCardsLoaded();
 
     const context = ctx();
@@ -311,6 +313,7 @@ export async function buildPrompterContext({ messageIndex = null } = {}) {
             // takes effect on the next request instead of the next page reload.
             examplePrompt: substituteTrimmed(settings.prompter_example_prompt),
             maxTags: settings.prompter_max_tags,
+            includeSchema: schemaBelongsInPrompt(structuredMode),
         }),
     });
 

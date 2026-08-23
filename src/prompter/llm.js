@@ -177,6 +177,46 @@ function profileSupportsNativeSchema(service, profileId) {
 }
 
 /**
+ * Whether the next request will go out with the backend enforcing the schema.
+ *
+ * Mirrors what sendViaProfile and sendViaGenerateRaw decide, so the prompt builder
+ * can leave the schema JSON out of OUTPUT RULES when it would be redundant — and
+ * so it puts it back for a profile that has already refused one.
+ * @returns {boolean}
+ */
+export function nativeSchemaLikely() {
+    const settings = getSettings();
+    if (settings.prompter_structured_mode === "json") return false;
+
+    const { transport, profileId } = getTransportInfo();
+    if (transport !== "profile") return !nativeRefused.has("generateRaw");
+
+    if (nativeRefused.has(`profile:${profileId}`)) return false;
+    return profileSupportsNativeSchema(ctx().ConnectionManagerRequestService, profileId);
+}
+
+/**
+ * Whether OUTPUT RULES should restate the schema JSON for this request.
+ *
+ * On `"always"` — the default — it always does, byte for byte as before. On
+ * `"auto"` it is omitted while the backend is enforcing the schema itself, and
+ * put back when it is not: either because this transport cannot enforce one, or
+ * because a refusal is being retried and `structuredMode` says so.
+ *
+ * Lives here rather than in schema.js because the answer is transport knowledge,
+ * and schema.js is deliberately free of a ctx() accessor.
+ *
+ * @param {"native" | "json" | null} [structuredMode] - Forced answer, used by the rebuild
+ * @returns {boolean}
+ */
+export function schemaBelongsInPrompt(structuredMode = null) {
+    if (getSettings().prompter_rules_verbosity !== "auto") return true;
+    if (structuredMode === "json") return true;
+    if (structuredMode === "native") return false;
+    return !nativeSchemaLikely();
+}
+
+/**
  * The json_schema payload core expects: `{name, value, strict, returnInvalid}`.
  * `returnInvalid` keeps an unparsable reply as a string instead of collapsing it
  * to `{}`, which is the difference between a diagnosable failure and a silent one.
@@ -235,12 +275,41 @@ function raceTimeout(promise, timeoutMs) {
 }
 
 /**
+ * Re-renders the request for the prompt-engineered retry.
+ *
+ * A rebuild is not a new request — it is the same request with different text, so
+ * it happens inside the caller's timeout and inside the `finally` that puts the
+ * preset back. A rebuild that throws keeps the original messages: a degraded
+ * request that still carries a redundant schema is far better than no request.
+ *
+ * @param {((mode: string) => Promise<Message[]>) | null} rebuild
+ * @param {Message[]} fallback
+ * @returns {Promise<Message[]>}
+ */
+async function rebuildFor(rebuild, fallback) {
+    if (!rebuild) return fallback;
+    try {
+        const rebuilt = await rebuild("json");
+        if (Array.isArray(rebuilt) && rebuilt.length) {
+            debugLog("rebuilt the prompt for the prompt-engineered retry");
+            return rebuilt;
+        }
+    } catch (err) {
+        warnLog("could not rebuild the prompt for the retry, sending the original", err?.message || err);
+    }
+    return fallback;
+}
+
+/**
  * Sends via a Connection Profile.
  * @returns {Promise<{payload: string | object, structured: "native" | "json"}>}
  */
-async function sendViaProfile({ messages, profileId, wantNative, signal, timeoutMs, maxTokens, schema, schemaName }) {
+async function sendViaProfile({ messages, profileId, wantNative, signal, timeoutMs, maxTokens, schema, schemaName, rebuild }) {
     const service = ctx().ConnectionManagerRequestService;
     const settings = getSettings();
+
+    // Reassigned only by a rebuild on the degrade path.
+    let current = messages;
 
     const requestedPreset = String(settings.prompter_preset || "").trim();
     const profile = typeof service.getProfile === "function" ? service.getProfile(profileId) : null;
@@ -266,9 +335,9 @@ async function sendViaProfile({ messages, profileId, wantNative, signal, timeout
             preset: overridePreset ? requestedPreset : profile.preset,
             structured: useNative ? "native" : "json",
             maxTokens,
-            messages: messages.map((m, index) => ({ index, role: m.role, contentLength: m.content.length })),
+            messages: current.map((m, index) => ({ index, role: m.role, contentLength: m.content.length })),
         });
-        return await service.sendRequest(profileId, messages, maxTokens, {
+        return await service.sendRequest(profileId, current, maxTokens, {
             stream: false,
             extractData: true,
             includePreset: true,
@@ -287,6 +356,7 @@ async function sendViaProfile({ messages, profileId, wantNative, signal, timeout
                 if (signal?.aborted || isTimeoutError(error) || !isSchemaRefusal(error)) throw error;
                 warnLog("backend refused schema-constrained output, retrying in prompt-engineered mode", getErrorChain(error));
                 nativeRefused.add(refusalKey);
+                current = await rebuildFor(rebuild, current);
             }
         }
 
@@ -304,7 +374,7 @@ async function sendViaProfile({ messages, profileId, wantNative, signal, timeout
  * prompt-engineered output.
  * @returns {Promise<{payload: string | object, structured: "native" | "json"}>}
  */
-async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, schema, schemaName, prefill }) {
+async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, schema, schemaName, prefill, rebuild }) {
     const { generateRaw } = ctx();
     if (typeof generateRaw !== "function") {
         throw new Error("generateRaw is not available in this SillyTavern build.");
@@ -313,8 +383,16 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, 
     const refusalKey = "generateRaw";
     const native = wantNative && !nativeRefused.has(refusalKey);
 
+    // One deadline for the whole exchange, not one per attempt: a refusal plus a
+    // rebuild plus a retry must not add up to twice the configured timeout.
+    const ms = Number(timeoutMs) > 0 ? Number(timeoutMs) : 0;
+    const deadline = ms ? Date.now() + ms : 0;
+    const remaining = () => (deadline ? deadline - Date.now() : 0);
+
+    let current = messages;
+
     const send = async (useNative) => {
-        const options = { prompt: messages, responseLength: maxTokens };
+        const options = { prompt: current, responseLength: maxTokens };
         if (useNative) {
             options.jsonSchema = buildJsonSchemaPayload(schema, schemaName);
         } else {
@@ -331,10 +409,13 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, 
         debugLog("generateRaw request", {
             structured: useNative ? "native" : "json",
             maxTokens,
-            turns: messages.length,
+            turns: current.length,
             prefill: !useNative && prefill ? prefill.length : 0,
         });
-        return await raceTimeout(generateRaw(options), timeoutMs);
+        if (deadline && remaining() <= 0) {
+            throw new DOMException("Prompter request timed out", "TimeoutError");
+        }
+        return await raceTimeout(generateRaw(options), remaining());
     };
 
     if (native) {
@@ -344,6 +425,7 @@ async function sendViaGenerateRaw({ messages, wantNative, timeoutMs, maxTokens, 
             if (isTimeoutError(error) || !isSchemaRefusal(error)) throw error;
             warnLog("main API refused schema-constrained output, retrying in prompt-engineered mode", getErrorChain(error));
             nativeRefused.add(refusalKey);
+            current = await rebuildFor(rebuild, current);
         }
     }
 
@@ -397,6 +479,7 @@ function withUserTurn(messages, userTurn) {
  * @param {string} [params.schemaName] - Name some providers surface in errors
  * @param {string | null} [params.userTurn] - Overrides the configured user message
  * @param {number | null} [params.maxTokens] - Overrides the configured budget
+ * @param {((structuredMode: string) => Promise<Message[]>) | null} [params.rebuild] - Re-renders the request for the prompt-engineered retry. Only called on the degrade path, and only when the schema JSON is being omitted.
  * @returns {Promise<{payload: string | object, transport: string, structured: string, transportReason: string}>}
  */
 export async function runPrompter({
@@ -406,6 +489,7 @@ export async function runPrompter({
     schemaName = SCHEMA_NAME,
     userTurn = null,
     maxTokens = null,
+    rebuild = null,
 }) {
     const settings = getSettings();
     const budget = Number(maxTokens) || Number(settings.prompter_max_tokens) || 1024;
@@ -426,6 +510,13 @@ export async function runPrompter({
         warnLog("prefill is set but the connection-profile transport has no prefill parameter — ignoring it");
     }
 
+    // Only worth a rebuild when the prompt is actually different in the two
+    // modes. On "always" the schema JSON is in the prompt either way, so a rebuild
+    // would re-read world info to produce the same bytes.
+    const rebuildMessages = rebuild && settings.prompter_rules_verbosity === "auto"
+        ? async (/** @type {string} */ mode) => withUserTurn(await rebuild(mode), userTurn)
+        : null;
+
     const request = {
         messages,
         wantNative,
@@ -434,6 +525,7 @@ export async function runPrompter({
         schema,
         schemaName,
         prefill: transport === "profile" ? "" : prefill,
+        rebuild: rebuildMessages,
     };
     const result = transport === "profile"
         ? await sendViaProfile({ ...request, profileId, signal })
