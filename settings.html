@@ -313,6 +313,20 @@
                 </div>
 
                 <div style="margin-top: 8px;">
+                    <label for="comfyinject_prompter_constraints">Constraints</label>
+                    <textarea id="comfyinject_prompter_constraints" class="text_pole" rows="5"></textarea>
+                    <small>
+                        Rendered as the <b>CONSTRAINTS</b> section, right after <b>Prompter Instructions</b>.
+                        Left out entirely when empty. This is the slot for standing facts about your
+                        <i>checkpoint</i> rather than your story — "renders one figure only", "the camera is
+                        never the user's eyes" — so you never have to rewrite the shipped instructions to state
+                        one. It sits in the unchanging half of the request, so a long block here is sent once
+                        and cached rather than re-sent every message; put short overrides that have to win in
+                        <b>Final Instructions</b> instead.
+                    </small>
+                </div>
+
+                <div style="margin-top: 8px;">
                     <label for="comfyinject_prompter_example_prompt">Example Image Prompt</label>
                     <textarea id="comfyinject_prompter_example_prompt" class="text_pole" rows="3"></textarea>
                     <div class="flex-container flexGap5" style="margin-top: 4px;">

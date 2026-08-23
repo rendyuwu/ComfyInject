@@ -194,6 +194,16 @@ export const defaultSettings = Object.freeze({
 
     prompter_system_prompt: DEFAULT_PROMPTER_SYSTEM_PROMPT,
 
+    // Rendered as the CONSTRAINTS section, in the cacheable half of the request
+    // immediately after TASK. Omitted when empty.
+    //
+    // This is where a property of the user's *renderer* goes — "this checkpoint
+    // renders one figure only" — as opposed to a property of their story, which is
+    // TASK's business. Separate from prompter_final_instructions by cost and
+    // position rather than by purpose: long standing text belongs in the cached
+    // prefix, a short override that has to win belongs last.
+    prompter_constraints: "",
+
     // The `prompt` string in the filled example inside OUTPUT RULES. An example
     // of a good reply outweighs prose about what a good reply looks like, so
     // this is the field to shorten for a checkpoint that can only draw simple

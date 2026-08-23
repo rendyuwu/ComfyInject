@@ -90,6 +90,20 @@ function buildTaskSection(settings) {
     return body ? [{ title: "TASK", body }] : [];
 }
 
+/**
+ * Standing rules about the renderer rather than about the story.
+ *
+ * Placed in the stable block right after TASK, which is the whole reason this is a
+ * field and not advice to edit TASK: these statements outlive character cards,
+ * chats and policy switches, and a long block of them in FINAL INSTRUCTIONS would
+ * be re-sent at the volatile block's full price on every single message.
+ * @returns {Section[]}
+ */
+function buildConstraintsSection(settings) {
+    const body = substituteTrimmed(settings.prompter_constraints);
+    return body ? [{ title: "CONSTRAINTS", body }] : [];
+}
+
 /** @returns {Section[]} */
 function buildSessionSection() {
     const context = ctx();
@@ -341,6 +355,7 @@ export async function buildPrompterContext({ messageIndex = null, structuredMode
     }
 
     stable.push(...buildTaskSection(settings));
+    stable.push(...buildConstraintsSection(settings));
     if (!registryIsVolatile) stable.push(...appearanceSections);
     stable.push(...buildSessionSection());
 

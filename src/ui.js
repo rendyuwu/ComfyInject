@@ -52,6 +52,7 @@ const PROMPTER_FIELDS = [
     ["#comfyinject_prompter_appearance_autoseed", "prompter_appearance_autoseed", "checkbox"],
     ["#comfyinject_prompter_debug", "prompter_debug", "checkbox"],
     ["#comfyinject_prompter_system_prompt", "prompter_system_prompt", "text"],
+    ["#comfyinject_prompter_constraints", "prompter_constraints", "text"],
     ["#comfyinject_prompter_example_prompt", "prompter_example_prompt", "text"],
     ["#comfyinject_prompter_final_instructions", "prompter_final_instructions", "text"],
     ["#comfyinject_prompter_user_turn", "prompter_user_turn", "text"],
