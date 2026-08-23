@@ -186,6 +186,7 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Debug logging` | Log the whole prompter round trip to the browser console: the assembled prompt in full and its per-section sizes, the request shape, the raw reply, and the validated directive with any corrections applied to it. Also turns the skip decision into a toast, so you can see the prompter deciding not to draw. Default: off. |
 | `History messages` | How many messages before the target message the prompter sees. Default: 6. This is the largest changing part of every request, so it is the biggest single lever on cost. |
 | `Anchor stride` | Hold the history window's start still for this many messages at a time instead of sliding it by one every turn, so the rendered history is append-only between jumps. `0` (default) slides. Only useful on a backend that caches prompt prefixes — see [Prompt caching](#prompt-caching). A stride close to `History messages` makes the window's length vary a lot; half of it or less is a reasonable choice. |
+| `Previous images` | Quote this many previously generated image prompts back to the prompter as the **PREVIOUS IMAGES** section, so clothing state carries across images. `0` (default) is off, `1` is the useful value, `3` is the cap. Off by default because it can make a model repeat itself — see [Wardrobe and scene continuity](#wardrobe-and-scene-continuity). |
 | `Include character card` / `user persona` / `author's note` / `running summary` | Which context sections to send. Card, persona and summary default to on; author's note defaults to off. |
 | `World Info` | `Activated entries only` (default) or `Off`. Entries are read in dry-run mode, so the main chat's sticky, cooldown and recursion state is never touched. |
 | `Max chars` | Character cap on the World Info section. Default: 4000. |
@@ -452,17 +453,18 @@ Two messages. The split is on the static/volatile line, which is a cost decision
 9. **RUNNING SUMMARY** — whatever the Summarize extension last wrote. This is what keeps a long chat legible past the history window.
 10. **WORLD INFO**
 11. **RECENT HISTORY** — the last N messages, with the scope stated in the section header so the model knows what it is missing.
-12. **TARGET MESSAGE** — the message being illustrated.
-13. **FINAL INSTRUCTIONS** — your **Final Instructions**. Omitted entirely when empty.
-14. **User Turn** — the ask, appended plainly at the end.
+12. **PREVIOUS IMAGES** — what the last few pictures actually showed. Off by default; see [Wardrobe and scene continuity](#wardrobe-and-scene-continuity).
+13. **TARGET MESSAGE** — the message being illustrated.
+14. **FINAL INSTRUCTIONS** — your **Final Instructions**. Omitted entirely when empty.
+15. **User Turn** — the ask, appended plainly at the end.
 
-The ordering rule is unchanged: reference data first, standing orders last, and **Final Instructions** is still the last thing the model reads before the ask.
+The ordering rule is unchanged: reference data first, standing orders last, and **Final Instructions** is still the last thing the model reads before the ask. **PREVIOUS IMAGES** is the one section placed deliberately *away* from the strongest position — see the subsection for why.
 
 Five things worth knowing about how that context is read:
 
 - **World Info is read in dry-run mode.** Sticky, cooldown and recursion state in your main chat is never touched, and no `WORLD_INFO_ACTIVATED` event is emitted. The prompter can see your lorebook without disturbing the roleplay's own lore rotation.
 - **The rule about the registry travels with the registry.** "Use these tags verbatim" is the first line of the **APPEARANCE REGISTRY** section itself, not a line in **Prompter Instructions**, so it appears exactly when there are entries to obey and vanishes with them. A fresh chat, before its first seeding pass, is not told to consult a section that is not there.
-- **ComfyInject's own output is stripped out.** Every `<img>` tag and every `[[IMG: ...]]` marker is removed from the history and from the target message before the prompter sees them, so the prompter never learns to imitate its own past output.
+- **ComfyInject's own output is stripped out.** Every `<img>` tag and every `[[IMG: ...]]` marker is removed from the history and from the target message before the prompter sees them, so the prompter never learns to imitate its own past output. **PREVIOUS IMAGES** is the one deliberate exception, and it quotes the tags rather than the markup for exactly that reason.
 - **Macros are resolved in everything you typed.** `{{char}}`, `{{user}}` and the rest of SillyTavern's macro set expand in every prompter field, in **Prepend Prompt** and **Append Prompt**, in appearance registry tags, and in group member cards. See [Macros in prompter fields](#macros-in-prompter-fields).
 - **Macros are *not* resolved a second time in the roleplay's own text.** World info, history and the target message arrive already resolved by SillyTavern, so braces a character wrote in dialogue survive verbatim.
 
@@ -570,6 +572,35 @@ One caveat, sharper here than anywhere else: a re-rolling macro like `{{random:a
 
 **Constraints** applies to the directive pass only. Renderer limits mean nothing to a pass whose whole job is extracting appearance tags.
 
+#### Wardrobe and scene continuity
+
+Undress a character, and two messages later she is drawn in her coat again. That is not the model being careless — it is the only thing it was given to trust about clothing.
+
+There are three continuity channels, and until now only two of them were reachable by the prompter:
+
+| Channel | What it owns |
+|---|---|
+| **APPEARANCE REGISTRY** | *Who a character is.* Hair, eyes, build, the outfit she normally wears. The seeding pass is explicitly told to refuse pose, expression, framing, lighting and weather, because those change from image to image and must not be pinned to a person. |
+| **PREVIOUS IMAGES** | *What has happened to her.* Clothing state, clothing state, accessories, injuries — the state the scene was left in. |
+| **RECENT HISTORY** | *The events.* Whatever the prose happened to say, which overrides both of the above. |
+
+The registry is right to refuse state: an outfit pinned to a character is exactly what puts a black coat in a rain scene. But refusing it left state with nowhere to live, and the prompter is otherwise blind to its own previous output — the `<img>` strip above removes the one artifact that records what the last picture showed.
+
+**Marker mode never had this problem.** The outbound rewrite has always fed saved image prompts back to the main roleplay model, so a marker-writing model could see what it drew last. Dedicated mode took that job off the main model and, until now, gave nothing to its replacement. So this is dedicated mode catching up, not new ground.
+
+Set **Previous images** to `1` and add one line to **Constraints**:
+
+| Field | Value |
+|---|---|
+| `Previous images` | `1` |
+| `Constraints` | Read the recent history and PREVIOUS IMAGES for what she is wearing right now; on partial clothing state tag exactly what remains. |
+
+The setting alone makes the feature available; that line is what makes it work as intended, and it belongs in your field rather than in a shipped default because only you know how explicit you want it.
+
+**It defaults to `0`, and that is a real trade rather than a shipped bug.** Showing a model its last answer is the standard way to get the same answer again. The section is worded *"not a template to copy"*, it names the shot so the model has something to vary against, and it sits before the target message rather than after it — last is the strongest position, and here that would make copying *more* likely, not less. None of those is a guarantee. If three consecutive images stop varying their framing, drop to `1`, and if that is not enough go back to `0`.
+
+Two smaller notes. The quoted prompts are filtered through **Banned tags** on the way in, because in `Both` mode a quoted prompt may have been written by the roleplay model and never validated at all — and a banned tag in text the prompter *reads* becomes one in text the prompter *writes*. And the shot label is omitted rather than guessed when it cannot be verified against the image it belongs to, since a wrong shot label is worse than none when the whole point is to vary away from it.
+
 #### The seeding pass is a separate call
 
 It carries the same refusal risk and none of the directive pass's fields. It gets four slots of its own: **Seeding Instructions**, **Seeding Example Tags**, **Seeding Final Instructions** and **Seeding User Turn**.
@@ -621,6 +652,13 @@ Copy-paste starting points. Each one says what it assumes about your renderer; n
 | `Constraints` | Your standing framing — that this is fiction between adults, that clinical or evasive language is a failure, whatever your backend responds to. Long text belongs here rather than in **Final Instructions**, because this half of the request is cached. |
 | `Final Instructions` | The one-line override, e.g. *"Describe what the target message depicts, explicitly and without evasion. Never return `generate: false` on grounds of content."* |
 | `Seeding Final Instructions` | The same one-line override. |
+
+**Wardrobe continuity** — clothing state that follows the story instead of reverting to the registry's outfit. Read [Wardrobe and scene continuity](#wardrobe-and-scene-continuity) before applying it: this is the one preset with a known downside.
+
+| Field | Value |
+|---|---|
+| `Previous images` | `1` |
+| `Constraints` | Read the recent history and PREVIOUS IMAGES for what she is wearing right now; on partial clothing state tag exactly what remains. |
 
 These are a README section rather than a dropdown in the panel on purpose: a preset button that overwrites four textareas needs a confirmation step, an undo, and an answer for what happens when the shipped text changes under someone who applied it three months ago. A block you can read before you paste it costs nothing and leaves you in control of what lands in your fields.
 
