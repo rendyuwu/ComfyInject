@@ -1,4 +1,4 @@
-// The one reader of a saved ComfyInject <img> tag.
+// The one reader and writer of a saved ComfyInject <img> tag.
 //
 // `data-prompt` and `data-seed` on the tag itself are the source of truth for
 // what an image was generated from — metadata is supplementary, and is keyed by
@@ -7,17 +7,75 @@
 // had already begun to disagree: prompter/context.js accepts the sanitizer's
 // "custom-" class prefix while the others match the bare class only.
 //
+// buildImgTag lives here rather than in dom.js so the escape and its inverse sit
+// in one file, the way failtag.js already keeps them. Splitting them is how the
+// `>` bug below got in: the writer escaped `"` and nothing else, and the reader
+// was written against that assumption instead of against HTML.
+//
 // Pure string handling on purpose — no SillyTavern access, no settings read, no
 // metadata — so the node smoke tests exercise it without a mocked context.
 
 // The class match accepts the optional "custom-" prefix. SillyTavern's sanitizer
 // adds it in the rendered DOM while `mes` keeps the bare class; a superset is
 // harmless on `mes` and correct on rendered DOM.
-const IMG_TAG_REGEX = /<img class="(?:custom-)?comfyinject-image"[^>]*>/g;
+//
+// `(?:[^>"]|"[^"]*")*` rather than `[^>]*`, because a `>` inside an attribute
+// value must not end the tag. The plain version did, and a prompt carrying LoRA
+// syntax — `<lora:style:1>`, which a user's own final instructions can legitimately
+// ask the prompter to append — truncated the match mid-attribute. The truncated
+// match has no closing quote on data-prompt, so `prompt` read back as "" and
+// `seed` as null: continuity lost, retry and the gallery reading blanks, and the
+// tag's tail left in the message as literal HTML for the roleplay model to copy.
+// The two branches cannot both match the same first character, so the alternation
+// has no ambiguity to backtrack over.
+const IMG_TAG_REGEX = /<img class="(?:custom-)?comfyinject-image"(?:[^>"]|"[^"]*")*>/g;
 
 const SRC_REGEX = /src="([^"]*)"/;
 const PROMPT_REGEX = /data-prompt="([^"]*)"/;
 const SEED_REGEX = /data-seed="([^"]*)"/;
+
+const ESCAPES = { "&": "&amp;", "\"": "&quot;", "<": "&lt;", ">": "&gt;" };
+
+/**
+ * @param {any} value
+ * @returns {string}
+ */
+function escapeAttr(value) {
+    return String(value ?? "").replace(/[&"<>]/g, char => ESCAPES[char]);
+}
+
+/**
+ * The inverse of escapeAttr. `&amp;` is undone last, or an escaped `&quot;`
+ * written by a user would come back as a quote character.
+ *
+ * Tags written before escapeAttr existed hold a raw `<` or `>`, which this leaves
+ * alone — so the quote-aware regex above is what recovers those, and this is what
+ * keeps the ones written from now on readable.
+ * @param {any} value
+ * @returns {string}
+ */
+function unescapeAttr(value) {
+    return String(value ?? "")
+        .replace(/&quot;/g, "\"")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&amp;/g, "&");
+}
+
+/**
+ * Builds the <img> tag string that gets injected into the message.
+ * Stores prompt and seed as data attributes for outbound.js and the gallery to
+ * read. The shape is shared by the marker path and the dedicated prompter path,
+ * which is what lets retry, the gallery, the outbound rewrite and cleanup stay
+ * unaware of which one produced a given image.
+ * @param {string} imageUrl - The full ComfyUI /view URL
+ * @param {string} prompt - The raw prompt returned by generateImage()
+ * @param {number} seed - The resolved seed used for generation
+ * @returns {string} The HTML img tag string
+ */
+export function buildImgTag(imageUrl, prompt, seed) {
+    return `<img class="comfyinject-image" src="${escapeAttr(imageUrl)}" data-prompt="${escapeAttr(prompt)}" data-seed="${seed}" />`;
+}
 
 /**
  * @typedef {{ tag: string, url: string | null, prompt: string, seed: number | null, offset: number }} ImageTag
@@ -36,9 +94,8 @@ function parseOne(tag, offset) {
     return {
         tag,
         offset,
-        url: tag.match(SRC_REGEX)?.[1] || null,
-        // buildImgTag() writes `"` as `&quot;` (dom.js); this reverses it.
-        prompt: tag.match(PROMPT_REGEX)?.[1]?.replace(/&quot;/g, '"') || "",
+        url: unescapeAttr(tag.match(SRC_REGEX)?.[1] ?? "") || null,
+        prompt: unescapeAttr(tag.match(PROMPT_REGEX)?.[1] ?? ""),
         // null rather than NaN, so a caller can tell "no seed recorded" from
         // "seed 0".
         seed: Number.isFinite(seed) ? seed : null,
@@ -51,7 +108,7 @@ function parseOne(tag, offset) {
  * Order is load-bearing: retryImage() and the gallery both map a metadata entry
  * to a tag positionally, so this must never reorder or skip.
  *
- * `prompt` is unescaped — buildImgTag() writes `"` as `&quot;` (dom.js) and this
+ * `prompt` is unescaped — buildImgTag() escapes `&`, `"`, `<` and `>`, and this
  * reverses it. `seed` is a finite number or null; null rather than NaN so a
  * caller can tell "no seed recorded" from "seed 0". `offset` is where the tag
  * starts, which is how a retried failure placeholder works out how many images

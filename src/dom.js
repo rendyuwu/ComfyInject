@@ -2,24 +2,9 @@ import { MARKER_REGEX, processAllImageMarkers, hasImageMarker } from "./parse.js
 import { generateImage } from "./comfy.js";
 import { saveLastSeed, getImageData } from "./state.js";
 import { notifyFailure, notifyRepair, notifyWarning, repairToastsEnabled } from "./notify.js";
-import { countImageTags, parseImageTags, replaceImageTags } from "./imgtag.js";
+import { buildImgTag, countImageTags, parseImageTags, replaceImageTags } from "./imgtag.js";
 import { buildFailedTag, parseFailedTags, replaceFailedTags } from "./failtag.js";
 import { MODULE_NAME } from "../settings.js";
-
-/**
- * Builds the <img> tag string that gets injected into the message.
- * Stores prompt and seed as data attributes for outbound.js to read.
- * The shape is shared by the marker path and the dedicated prompter path, which
- * is what lets retry, the gallery, the outbound rewrite and cleanup stay unaware
- * of which one produced a given image.
- * @param {string} imageUrl - The full ComfyUI /view URL
- * @param {string} prompt - The raw prompt returned by generateImage()
- * @param {number} seed - The resolved seed used for generation
- * @returns {string} The HTML img tag string
- */
-export function buildImgTag(imageUrl, prompt, seed) {
-    return `<img class="comfyinject-image" src="${imageUrl}" data-prompt="${prompt.replace(/"/g, '&quot;')}" data-seed="${seed}" />`;
-}
 
 /**
  * Counts the ComfyInject images already present in a message's text.

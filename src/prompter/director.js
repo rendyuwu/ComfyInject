@@ -24,7 +24,6 @@ import { generateImage } from "../comfy.js";
 import { resolveSeed, saveLastSeed } from "../state.js";
 import {
     appendImageToMessage,
-    buildImgTag,
     countComfyImages,
     findIndexBySendDate,
     persistMessageImages,
@@ -32,6 +31,7 @@ import {
 } from "../dom.js";
 import { buildFailedTag, countFailedTags } from "../failtag.js";
 import { isTimeoutError as isFetchTimeout } from "../http.js";
+import { buildImgTag } from "../imgtag.js";
 import { notifyFailure, notifyWarning } from "../notify.js";
 import { ensureRegistrySeeded, growRegistry, resetAppearanceState } from "./appearance.js";
 import { buildPrompterContext } from "./context.js";
@@ -353,10 +353,24 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
  * event emitter awaits listeners in registration order — so an image already in
  * the message means the roleplay model emitted a marker and this run stands down.
  * @param {number} index
+ * @param {string} [type] - ST's own reason for the render, second argument of the
+ * event. "first_message" is the greeting.
  */
-async function onCharacterMessage(index) {
+async function onCharacterMessage(index, type) {
     if (!dedicatedEnabled()) return;
     if (!getSettings()?.prompter_auto) return;
+
+    // The greeting is not a turn. It is card text the roleplay model never wrote,
+    // it is the same for every chat started on that card, and SillyTavern re-emits
+    // it on every open of a chat that still holds nothing else (script.js:7643's
+    // `chat.length === 1` branch, and again on a greeting swipe at script.js:9859).
+    // Illustrating it spends a prompter call and an image before the story has a
+    // first beat to illustrate. The per-message button still works on it, which is
+    // the whole difference between "never" and "not on its own".
+    if (type === "first_message") {
+        debugLog("skipping: the greeting is not a turn", index);
+        return;
+    }
 
     const message = ctx().chat?.[index];
     if (!message || message.is_user || message.is_system) return;

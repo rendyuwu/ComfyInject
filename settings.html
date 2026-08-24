@@ -254,9 +254,9 @@
                     different registries — who has actually turned up, and what this story has done to how they
                     look. <code>0</code> reads the cards only, which produces the same registry in every chat.
                     <b>Re-seed every</b> runs the pass again once the chat has grown by that many messages, since
-                    the first pass fires on the greeting and cannot know who walks in later; <code>0</code> seeds
-                    once per chat and never again. Each re-seed costs one LLM call, and hand-edited rows are
-                    never overwritten.
+                    the first pass fires on the first illustrated reply and cannot know who walks in later;
+                    <code>0</code> seeds once per chat and never again. Each re-seed costs one LLM call, and
+                    hand-edited rows are never overwritten.
                 </small>
 
                 <label class="checkbox_label" for="comfyinject_prompter_seed_include_summary" title="Include the Summarize extension's running summary in the seeding pass.">
