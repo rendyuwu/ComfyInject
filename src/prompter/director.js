@@ -29,8 +29,8 @@ import {
     findIndexBySendDate,
     persistMessageImages,
     renderMessageWithSuffix,
-    rerenderMessage,
 } from "../dom.js";
+import { buildFailedTag, countFailedTags } from "../failtag.js";
 import { isTimeoutError as isFetchTimeout } from "../http.js";
 import { notifyFailure, notifyWarning } from "../notify.js";
 import { ensureRegistrySeeded, growRegistry, resetAppearanceState } from "./appearance.js";
@@ -286,9 +286,26 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
         } catch (err) {
             console.error("[ComfyInject] Dedicated-path image generation failed:", err);
             const currentIndex = findIndexBySendDate(sendDate);
-            if (currentIndex !== -1) rerenderMessage(currentIndex, ctx().chat[currentIndex]);
+            if (currentIndex !== -1) {
+                // Keep the directive rather than the disappointment. A prompter
+                // reply costs an LLM call and would come back different next
+                // time, so the placeholder holds this one — prompt, framing and
+                // seed — and a Retry button spends nothing but an HTTP request
+                // once ComfyUI is reachable again.
+                const currentMessage = ctx().chat[currentIndex];
+                appendImageToMessage(currentMessage, buildFailedTag({
+                    prompt: image.prompt,
+                    ar: image.ar,
+                    shot: image.shot,
+                    seed,
+                    error: err,
+                }));
+                await persistMessageImages(currentIndex, currentMessage, [], { appendMetadata: true });
+            }
             reportFailure(
-                isFetchTimeout(err) ? "ComfyUI did not answer in time." : "Image generation failed.",
+                isFetchTimeout(err)
+                    ? "ComfyUI did not answer in time. Press Retry on the message when it is back."
+                    : "Image generation failed. Press Retry on the message to try again.",
                 manual
             );
             return;
@@ -345,8 +362,11 @@ async function onCharacterMessage(index) {
     if (!message || message.is_user || message.is_system) return;
     if (!String(message.mes ?? "").trim()) return;
 
-    if (countComfyImages(message.mes) > 0) {
-        debugLog("skipping: the message already has an image", index);
+    // A failure placeholder counts as an image here. It already holds a directive
+    // this prompter wrote, and its Retry button is a cheaper and more faithful way
+    // to get the picture than a second LLM call that would invent a new prompt.
+    if (countComfyImages(message.mes) > 0 || countFailedTags(message.mes) > 0) {
+        debugLog("skipping: the message already has an image or a failed one", index);
         return;
     }
 

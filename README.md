@@ -38,7 +38,12 @@ Everything after the prompt is shared by both modes. Multiple images per message
       </ul>
     </li>
     <li><a href="#image-gallery">Image Gallery</a></li>
-    <li><a href="#retry-button">Retry Button</a></li>
+    <li>
+      <a href="#retry-button">Retry Button</a>
+      <ul>
+        <li><a href="#retrying-an-image-that-never-generated">Retrying an image that never generated</a></li>
+      </ul>
+    </li>
     <li><a href="#local-image-saving">Local Image Saving</a></li>
     <li><a href="#custom-workflows">Custom Workflows</a></li>
     <li><a href="#how-it-works">How It Works</a></li>
@@ -738,6 +743,22 @@ During regeneration, the button shows a spinning icon. The new image replaces th
 
 In messages with multiple images, each retry button only affects its own image — the others are left untouched.
 
+### Retrying an image that never generated
+
+A generation that fails — ComfyUI switched off, a checkpoint filename that does not exist, a workflow that errors — leaves a placeholder in the message instead of an image:
+
+> `[Image generation failed]` **⟳ Retry**
+
+The placeholder is saved text, so it survives a reload, and it carries the prompt, aspect ratio, shot and seed of the attempt that failed. Start ComfyUI, press **Retry**, and the placeholder becomes the image it was always meant to be. Hover the placeholder itself to see what the backend actually said.
+
+Three things follow from the placeholder holding the prompt:
+
+- **It costs no LLM call.** On the dedicated path the prompter has already written a directive for that message; retrying replays it rather than asking for a new one, which would come back different.
+- **The seed is replayed, not re-rolled** — unlike the image retry button above. This is the first attempt at this image finally succeeding, not a second take on one that already exists.
+- **The prompter stands down on a message that has one.** A failed placeholder counts as an image for the purpose of "this message has already been illustrated", so a swipe or a re-render will not quietly spend another call on it.
+
+Placeholders are never sent to your roleplay model — [outbound rewriting](#how-it-works) strips them, the same way it rewrites real images into compact tokens. A marker that could not be *parsed* at all is a different case and still shows a plain `[Image marker invalid]`: there is no prompt in it to retry.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
@@ -805,8 +826,10 @@ Steps 1 and 2 depend on the trigger mode. Everything from step 3 on is shared.
 6. The image becomes an `<img>` tag in the chat permanently — replacing the marker in marker mode, appended at the end of the message in dedicated mode
 7. Image metadata (AR, shot, prompt ID, filename, effective settings, and either repair metadata or the prompter's reason and character list) is saved to chat metadata keyed by message timestamp for stability across deletions
 8. The saved image is recorded against the current chat so it can be cleaned up if that chat is ever deleted
-9. On the next generation, the outbound interceptor replaces `<img>` tags with a compact text reference instead of raw HTML — `[[IMG: prompt | seed ]]` in marker and both mode, so the format stays reinforced, and a neutral `[image: prompt]` in dedicated mode, where teaching the main model marker syntax would be counterproductive. Quiet generations (summaries and other extensions' background calls) are left alone in every mode
-10. Retry buttons are injected via DOM manipulation after each render
+9. On the next generation, the outbound interceptor replaces `<img>` tags with a compact text reference instead of raw HTML — `[[IMG: prompt | seed ]]` in marker and both mode, so the format stays reinforced, and a neutral `[image: prompt]` in dedicated mode, where teaching the main model marker syntax would be counterproductive. Failure placeholders are stripped entirely. Quiet generations (summaries and other extensions' background calls) are left alone in every mode
+10. Retry buttons are injected via DOM manipulation after each render, on finished images and on failure placeholders alike
+
+If step 3, 4 or 5 fails, the image's slot in the message is filled with a `[Image generation failed]` placeholder carrying the prompt, framing and seed of the attempt, and its own Retry button re-enters the sequence at step 3 — see [Retrying an image that never generated](#retrying-an-image-that-never-generated).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -910,6 +933,7 @@ A few things to check:
 - For successful repaired markers, check the Image Gallery for repair details
 - For failed markers, check the browser console for parse or generation failure details, including the original failed marker when available
 - Make sure your LLM is outputting the marker in the correct format — see the [Marker Format](#marker-format) section
+- Nothing is lost while you work through the list. A generation that fails leaves a `[Image generation failed]` placeholder holding the prompt, so once the cause is fixed you press **Retry** on it rather than re-rolling the message — see [Retrying an image that never generated](#retrying-an-image-that-never-generated)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

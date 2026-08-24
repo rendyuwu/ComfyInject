@@ -20,20 +20,22 @@ const PROMPT_REGEX = /data-prompt="([^"]*)"/;
 const SEED_REGEX = /data-seed="([^"]*)"/;
 
 /**
- * @typedef {{ tag: string, url: string | null, prompt: string, seed: number | null }} ImageTag
+ * @typedef {{ tag: string, url: string | null, prompt: string, seed: number | null, offset: number }} ImageTag
  */
 
 /**
  * The per-tag read, shared by the reader and the rewriter so the two can never
  * disagree about what a tag says.
  * @param {string} tag
+ * @param {number} offset - Where the tag starts in the text it was found in
  * @returns {ImageTag}
  */
-function parseOne(tag) {
+function parseOne(tag, offset) {
     const seed = parseInt(tag.match(SEED_REGEX)?.[1], 10);
 
     return {
         tag,
+        offset,
         url: tag.match(SRC_REGEX)?.[1] || null,
         // buildImgTag() writes `"` as `&quot;` (dom.js); this reverses it.
         prompt: tag.match(PROMPT_REGEX)?.[1]?.replace(/&quot;/g, '"') || "",
@@ -51,7 +53,9 @@ function parseOne(tag) {
  *
  * `prompt` is unescaped — buildImgTag() writes `"` as `&quot;` (dom.js) and this
  * reverses it. `seed` is a finite number or null; null rather than NaN so a
- * caller can tell "no seed recorded" from "seed 0".
+ * caller can tell "no seed recorded" from "seed 0". `offset` is where the tag
+ * starts, which is how a retried failure placeholder works out how many images
+ * precede it and therefore where its metadata entry belongs.
  *
  * @param {any} mes - A message's mes field
  * @returns {ImageTag[]}
@@ -60,7 +64,7 @@ export function parseImageTags(mes) {
     const text = String(mes ?? "");
     if (!text) return [];
 
-    return [...text.matchAll(IMG_TAG_REGEX)].map(match => parseOne(match[0]));
+    return [...text.matchAll(IMG_TAG_REGEX)].map(match => parseOne(match[0], match.index ?? 0));
 }
 
 /**
@@ -93,5 +97,5 @@ export function replaceImageTags(mes, replacer) {
     if (!text) return text;
 
     let index = 0;
-    return text.replace(IMG_TAG_REGEX, tag => replacer(parseOne(tag), index++));
+    return text.replace(IMG_TAG_REGEX, (tag, offset) => replacer(parseOne(tag, offset), index++));
 }

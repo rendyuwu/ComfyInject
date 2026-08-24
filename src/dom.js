@@ -3,6 +3,7 @@ import { generateImage } from "./comfy.js";
 import { saveLastSeed, getImageData } from "./state.js";
 import { notifyFailure, notifyRepair, notifyWarning, repairToastsEnabled } from "./notify.js";
 import { countImageTags, parseImageTags, replaceImageTags } from "./imgtag.js";
+import { buildFailedTag, parseFailedTags, replaceFailedTags } from "./failtag.js";
 import { MODULE_NAME } from "../settings.js";
 
 /**
@@ -183,11 +184,21 @@ function addRetryButtons(index) {
     const messageNode = document.querySelector(`[mesid="${index}"]`);
     if (!messageNode) return;
 
+    const sendDate = message.send_date;
+
+    addImageRetryButtons(messageNode, sendDate);
+    addFailedRetryButtons(messageNode, sendDate);
+}
+
+/**
+ * Adds the regenerate-with-a-new-seed button to every rendered image.
+ * @param {Element} messageNode - The message's rendered DOM node
+ * @param {string} sendDate - The message's send_date
+ */
+function addImageRetryButtons(messageNode, sendDate) {
     // ST's sanitizer prefixes custom classes with "custom-" in the rendered DOM
     const images = messageNode.querySelectorAll(".custom-comfyinject-image");
     if (images.length === 0) return;
-
-    const sendDate = message.send_date;
 
     images.forEach((img, imgIndex) => {
         // Don't add a second retry button if one already exists
@@ -220,6 +231,48 @@ function addRetryButtons(index) {
 }
 
 /**
+ * Adds a Retry affordance to every failed-generation placeholder in a message.
+ *
+ * The placeholder itself is saved text, so it survives a reload; the button is
+ * pure DOM injection like the image retry button, for the same reason — ST's
+ * sanitizer strips anything custom out of a message's saved text.
+ *
+ * @param {Element} messageNode - The message's rendered DOM node
+ * @param {string} sendDate - The message's send_date
+ */
+function addFailedRetryButtons(messageNode, sendDate) {
+    const placeholders = messageNode.querySelectorAll(".custom-comfyinject-failed");
+    if (placeholders.length === 0) return;
+
+    placeholders.forEach((placeholder, failIndex) => {
+        // Don't add a second button if one already exists
+        if (placeholder.nextElementSibling?.classList?.contains("comfyinject-retry-failed")) return;
+
+        placeholder.style.cssText = "opacity: 0.75; border: 1px dashed var(--SmartThemeBorderColor); border-radius: 4px; padding: 1px 6px;";
+        // The backend's own words, out of the way of the scene but one hover
+        // from the person who has to work out why nothing was drawn.
+        const reason = placeholder.getAttribute("data-error");
+        if (reason) placeholder.title = reason;
+
+        const btn = document.createElement("span");
+        btn.className = "comfyinject-retry-failed";
+        btn.dataset.senddate = sendDate;
+        btn.dataset.failindex = String(failIndex);
+        btn.title = "Generate this image again with the same prompt";
+        btn.style.cssText = "cursor: pointer; margin-left: 6px; padding: 1px 8px; border-radius: 4px; background: rgba(0,0,0,0.45); color: white; font-size: 12px; white-space: nowrap;";
+        btn.innerHTML = `<i class="fa-solid fa-rotate"></i> Retry`;
+
+        btn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            await retryFailedImage(sendDate, failIndex);
+        });
+
+        placeholder.after(btn);
+    });
+}
+
+/**
  * Adds retry buttons to all rendered comfyinject images across the entire chat.
  * Called after scanning existing messages on chat load.
  */
@@ -231,11 +284,13 @@ function addAllRetryButtons() {
 }
 
 /**
- * Appends an <img> tag to the end of a message's text.
- * This is how the dedicated prompter path places images: it has no marker to
- * replace, and end-of-message is the only placement that is always correct.
+ * Appends a generated tag to the end of a message's text.
+ * This is how the dedicated prompter path places its output: it has no marker to
+ * replace, and end-of-message is the only placement that is always correct. Used
+ * for the <img> tag on success and for the failure placeholder on failure, since
+ * both take the slot the image would have taken.
  * @param {object} message - A SillyTavern chat message object
- * @param {string} imgTag - Output of buildImgTag()
+ * @param {string} imgTag - Output of buildImgTag() or buildFailedTag()
  */
 export function appendImageToMessage(message, imgTag) {
     const text = String(message.mes ?? "").trimEnd();
@@ -283,15 +338,18 @@ export function renderMessageWithSuffix(index, message, suffixHtml) {
  * Metadata entry order must line up with <img> tag order in the message, because
  * that is how retryImage() maps a button back to its metadata. The marker path
  * replaces the message's entries wholesale; the dedicated path appends its own
- * after whatever is already there, which is what keeps both-mode ordering right.
+ * after whatever is already there, which is what keeps both-mode ordering right;
+ * a retried failure placeholder splices its entry in at the position the new
+ * image actually occupies, which is neither the front nor the back.
  *
  * @param {number} index - The current message array index
  * @param {object} message - The message object, already carrying its new <img> tags
  * @param {object[]} entries - One metadata entry per newly generated image
  * @param {object} [options]
  * @param {boolean} [options.appendMetadata=false] - Append to existing entries instead of replacing them
+ * @param {number|null} [options.insertAt=null] - Splice the entries in at this position instead
  */
-export async function persistMessageImages(index, message, entries, { appendMetadata = false } = {}) {
+export async function persistMessageImages(index, message, entries, { appendMetadata = false, insertAt = null } = {}) {
     const context = SillyTavern.getContext();
 
     rerenderMessage(index, message);
@@ -301,12 +359,19 @@ export async function persistMessageImages(index, message, entries, { appendMeta
     }
     const store = context.chatMetadata[MODULE_NAME];
 
-    if (appendMetadata) {
-        // Legacy chats key metadata by array index instead of send_date. Seed
-        // from the legacy entry so appended images do not renumber the old ones.
+    // Legacy chats key metadata by array index instead of send_date. Seed from
+    // the legacy entry so added images do not renumber the old ones.
+    const readExisting = () => {
         const existing = getImageData(store, message.send_date);
-        const base = existing.length > 0 ? existing : getImageData(store, index);
-        store[message.send_date] = [...base, ...entries];
+        return existing.length > 0 ? existing : getImageData(store, index);
+    };
+
+    if (Number.isInteger(insertAt)) {
+        const next = [...readExisting()];
+        next.splice(Math.min(Math.max(insertAt, 0), next.length), 0, ...entries);
+        store[message.send_date] = next;
+    } else if (appendMetadata) {
+        store[message.send_date] = [...readExisting(), ...entries];
     } else {
         store[message.send_date] = entries;
     }
@@ -395,7 +460,9 @@ async function processMessage(index, options = {}) {
             }
 
             const imgTag = buildImgTag(imageUrl, prompt, seed);
-            message.mes = message.mes.replace(MARKER_REGEX, imgTag);
+            // A function replacement, not a string: a prompt containing `$&` or
+            // `$1` would otherwise be read as a replacement pattern.
+            message.mes = message.mes.replace(MARKER_REGEX, () => imgTag);
             metadataArray.push({
                 ar,
                 shot,
@@ -440,9 +507,10 @@ async function processMessage(index, options = {}) {
                 `<span class="comfyinject-error">${errorText}</span>`
             );
         } else if (result?.status === "generation_error") {
-            // Marker parsed successfully, but image generation failed.
-            const errorText = `[Image generation failed${markerPosition ? `: marker${markerPosition}` : ""}]`;
-
+            // The marker parsed, so there is a real prompt here — ComfyUI simply
+            // did not answer. The marker is about to be consumed either way, so
+            // what replaces it carries the prompt, the framing and the seed, and
+            // a Retry button turns it back into an image once ComfyUI is up.
             console.error("[ComfyInject] Image generation failed:", {
                 messageIndex: index,
                 markerNumber,
@@ -450,10 +518,16 @@ async function processMessage(index, options = {}) {
                 reason: result?.error?.message ?? result?.error ?? null,
             });
 
-            message.mes = message.mes.replace(
-                MARKER_REGEX,
-                `<span class="comfyinject-error">${errorText}</span>`
-            );
+            const failedTag = buildFailedTag({
+                prompt: result.prompt,
+                ar: result.ar,
+                shot: result.shot,
+                seed: result.seed,
+                error: result.error,
+            });
+            // A function replacement, not a string: a prompt containing `$&` or
+            // `$1` would otherwise be read as a replacement pattern.
+            message.mes = message.mes.replace(MARKER_REGEX, () => failedTag);
         } else {
             // Fallback guard for any unexpected result shape.
             const errorText = `[Image generation failed${markerPosition ?`: marker${markerPosition}` : ""}]`;
@@ -654,6 +728,114 @@ async function retryImage(sendDate, imgIndex) {
     // Persist
     await context.saveMetadata();
     await context.saveChat();
+}
+
+/**
+ * Regenerates a failed image from the placeholder that stands in for it.
+ *
+ * This is the whole point of the placeholder: the prompt, framing and seed of the
+ * attempt that failed are stored on the span, so switching ComfyUI on and pressing
+ * Retry costs one HTTP round trip rather than a lost image — and on the dedicated
+ * path, rather than a second LLM call that would write a different prompt anyway.
+ *
+ * The seed is replayed rather than re-rolled, unlike the image retry button: this
+ * is the first attempt at this image finally succeeding, not a re-roll of one that
+ * already exists.
+ *
+ * @param {string} sendDate - The send_date of the message holding the placeholder
+ * @param {number} failIndex - Which placeholder within the message (0-based)
+ */
+async function retryFailedImage(sendDate, failIndex) {
+    const context = SillyTavern.getContext();
+
+    const messageIndex = findIndexBySendDate(sendDate);
+    if (messageIndex === -1) return;
+
+    const message = context.chat[messageIndex];
+    if (!message) return;
+
+    const failed = parseFailedTags(message.mes)[failIndex];
+    if (!failed?.prompt) return;
+
+    // The same marker-level defaults the parser uses, for a placeholder written
+    // before those attributes existed or edited by hand.
+    const retryAr = failed.ar || "SQUARE";
+    const retryShot = failed.shot || "MEDIUM";
+    const retrySeed = failed.seed ?? Math.floor(Math.random() * 9007199254740991);
+
+    const btn = document.querySelector(
+        `.comfyinject-retry-failed[data-senddate="${sendDate}"][data-failindex="${failIndex}"]`
+    );
+    const restoreButton = () => {
+        if (!btn) return;
+        btn.innerHTML = `<i class="fa-solid fa-rotate"></i> Retry`;
+        btn.style.pointerEvents = "auto";
+    };
+    if (btn) {
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Retrying`;
+        btn.style.pointerEvents = "none";
+    }
+
+    let result;
+    try {
+        result = await generateImage({
+            prompt: failed.prompt,
+            ar: retryAr,
+            shot: retryShot,
+            seed: retrySeed,
+            messageIndex,
+        });
+    } catch (err) {
+        console.error(`[ComfyInject] Retry of a failed image in message ${messageIndex} failed again:`, err);
+        // The user pressed Retry, so this always answers whatever the toast mode says.
+        notifyFailure("Image generation failed again.", { force: true });
+        restoreButton();
+        return;
+    }
+
+    // Messages shift while ComfyUI works, so the message and the placeholder are
+    // both re-found rather than held across the await.
+    const currentIndex = findIndexBySendDate(sendDate);
+    if (currentIndex === -1) {
+        console.warn("[ComfyInject] The message vanished while retrying, discarding the image");
+        return;
+    }
+    const currentMessage = context.chat[currentIndex];
+
+    const target = parseFailedTags(currentMessage.mes)[failIndex];
+    if (!target) {
+        restoreButton();
+        return;
+    }
+
+    saveLastSeed(result.seed);
+
+    // Where this image lands among the message's images decides where its
+    // metadata entry goes: persistMessageImages maps the two positionally, and a
+    // placeholder in the middle of a message becomes an image in the middle of it.
+    const imagePosition = parseImageTags(currentMessage.mes)
+        .filter(tag => tag.offset < target.offset)
+        .length;
+
+    const imgTag = buildImgTag(result.imageUrl, result.prompt, result.seed);
+    currentMessage.mes = replaceFailedTags(
+        currentMessage.mes,
+        (tag, n) => (n === failIndex ? imgTag : tag.tag)
+    );
+
+    await persistMessageImages(currentIndex, currentMessage, [{
+        ar: retryAr,
+        shot: retryShot,
+        promptId: result.promptId,
+        filename: result.filename,
+        effectiveAr: result.effectiveAr,
+        effectiveShot: result.effectiveShot,
+        resolution: result.resolution,
+        shotTags: result.shotTags,
+        repairMeta: null,
+    }], { insertAt: imagePosition });
+
+    console.log(`[ComfyInject] Recovered a failed image in message ${currentIndex}`);
 }
 
 /**

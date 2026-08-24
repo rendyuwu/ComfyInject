@@ -1,4 +1,5 @@
 import { MODULE_NAME } from "../settings.js";
+import { stripFailedTags } from "./failtag.js";
 import { replaceImageTags } from "./imgtag.js";
 
 /**
@@ -89,5 +90,10 @@ globalThis.comfyInjectInterceptor = async function(chat, contextSize, abort, typ
 
             return dedicatedOnly ? toNeutralTag(prompt) : toMarkerToken(prompt, seed ?? 0);
         });
+
+        // A failed image is an extension-internal artifact. Sending its
+        // placeholder would hand the main model a picture that does not exist,
+        // plus the prompt text of one it is not supposed to be writing.
+        message.mes = stripFailedTags(message.mes);
     }
 };

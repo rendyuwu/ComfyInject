@@ -400,7 +400,7 @@ function parseMarkerContent(innerContent, messageIndex) {
  *   { status: "parse_error", reason, repairMeta, rawMarker }
  *
  * Generation failure:
- *   { status: "generation_error", repairMeta, rawMarker }
+ *   { status: "generation_error", prompt, ar, shot, seed, repairMeta, rawMarker }
  *
  * @param {string} text
  * @param {number} messageIndex
@@ -445,6 +445,10 @@ function parseMarkerContent(innerContent, messageIndex) {
  *   | {
  *       status: "generation_error",
  *       error: any,
+ *       prompt: string,
+ *       ar: string,
+ *       shot: string,
+ *       seed: number,
  *       repairMeta: {
  *         defaulted: string[],
  *         duplicateTokens: {
@@ -499,9 +503,17 @@ export async function processAllImageMarkers(text, messageIndex) {
         } catch (err) {
             // The reason is carried out rather than swallowed: a ComfyUI timeout
             // and a bad checkpoint name used to look identical in the console.
+            //
+            // So is everything the attempt was made with. The marker is about to
+            // be replaced by a placeholder and will not exist to be re-read, so
+            // this is the only chance to keep what a retry needs.
             results.push({
                 status: "generation_error",
                 error: err,
+                prompt,
+                ar,
+                shot,
+                seed,
                 repairMeta,
                 rawMarker: match[0],
             });
