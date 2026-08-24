@@ -82,10 +82,13 @@ export const MAX_REGISTRY_MAX_CHARS = 2000;
 
 const MAX_ENTRIES = 40;
 
-// Growth takes its tags from the prompt of the image that introduced the
-// character, so it is capped harder — it is a first guess, not a considered one.
-// Never above the entry cap: a user who lowers that meant it.
-const MAX_GROWN_TAGS_CHARS = 240;
+// Growth is held to the entry cap and to nothing extra. It used to have a harder
+// cap of its own, on the reasoning that a distilled image prompt is a first guess
+// rather than a considered one — but truncating a guess does not make it a better
+// guess, it makes it the same guess with the wardrobe tail missing, frozen into
+// every request after it. Consistency is the only reason the registry exists, and
+// cost is what the entry cap is already for. A grown entry is still marked
+// "grown", which is how the editor says it is a first guess.
 
 /**
  * How many characters one registry entry may hold, from the live setting.
@@ -100,17 +103,6 @@ export function registryMaxChars() {
     const raw = Math.floor(Number(getSettings()?.prompter_registry_max_chars) || 0);
     if (!raw) return DEFAULT_REGISTRY_MAX_CHARS;
     return Math.min(MAX_REGISTRY_MAX_CHARS, Math.max(MIN_REGISTRY_MAX_CHARS, raw));
-}
-
-/**
- * The cap that applies to one write, which is the entry cap for a hand edit or a
- * seeded entry and the harder growth cap for a distilled one.
- * @param {string} source
- * @returns {number}
- */
-export function registryMaxCharsFor(source) {
-    const cap = registryMaxChars();
-    return source === "grown" ? Math.min(MAX_GROWN_TAGS_CHARS, cap) : cap;
 }
 
 // The one instruction the registry needs, kept in the section body so it is sent
@@ -203,9 +195,17 @@ function normalizeTags(value, maxChars, label = "") {
  * @param {string} label
  * @param {number} maxChars
  * @param {number} dropped
+ * @param {string} [source] - Who wrote the entry, which decides what advice applies
  */
-function warnTruncation(label, maxChars, dropped) {
-    warnLog(`the appearance tags for "${label || "?"}" hit the ${maxChars}-character cap — ${dropped} character(s) were dropped from the end. Raise "Registry entry size", shorten what the seeding pass is asked for, or edit the entry by hand.`);
+function warnTruncation(label, maxChars, dropped, source = "seed") {
+    // Which lever actually lifts the cut depends on who wrote the entry. Growth
+    // never reads the Seeding Instructions — it distils the prompt of the image
+    // that introduced the character — so naming that field here would be advice
+    // that cannot work, which is worse than none.
+    const lever = source === "grown"
+        ? `Raise "Registry entry size", lower "Max tags" so the prompt it distils is shorter, or edit the entry by hand.`
+        : `Raise "Registry entry size", shorten what the seeding pass is asked for, or edit the entry by hand.`;
+    warnLog(`the appearance tags for "${label || "?"}" hit the ${maxChars}-character cap — ${dropped} character(s) were dropped from the end. ${lever}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -329,9 +329,9 @@ export function setRegistryEntry(key, { name, tags, source }) {
         return false;
     }
 
-    const maxChars = registryMaxCharsFor(source);
+    const maxChars = registryMaxChars();
     const clean = normalizeTagsInfo(tags, maxChars);
-    if (clean.dropped) warnTruncation(trim(name) || key, maxChars, clean.dropped);
+    if (clean.dropped) warnTruncation(trim(name) || key, maxChars, clean.dropped, source);
     if (!clean.tags && source !== "user") return false;
 
     registry[key] = {
@@ -956,8 +956,8 @@ const TRANSIENT_TAG_PATTERNS = [
  * rather than the moment.
  *
  * Uncapped, for the same reason validateAppearanceReply is: setRegistryEntry
- * applies MAX_GROWN_TAGS_CHARS to a "grown" write, and one cap in one place is
- * what lets the entry record that it was cut.
+ * applies the entry cap, and one cap in one place is what lets the entry record
+ * that it was cut.
  *
  * @param {string} prompt
  * @returns {string}

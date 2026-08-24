@@ -15,7 +15,6 @@ import {
     listRegistryEntries,
     readRegistry,
     registryMaxChars,
-    registryMaxCharsFor,
     resolveCharacterKey,
     saveRegistry,
     seedRegistry,
@@ -126,9 +125,9 @@ function buildRow(entry, rerender) {
             // The cap that did the cutting, which is not today's cap once the
             // setting has been raised — and the raise is exactly when someone
             // reads this line.
-            const cap = state.truncatedAt || registryMaxCharsFor(state.source);
-            const room = registryMaxCharsFor(state.source) > cap
-                ? ` There is room for ${registryMaxCharsFor(state.source)} now — re-seed to get the rest back.`
+            const cap = state.truncatedAt || registryMaxChars();
+            const room = registryMaxChars() > cap
+                ? ` There is room for ${registryMaxChars()} now — re-seed to get the rest back.`
                 : ` Raise <b>Registry entry size</b> and re-seed to get the rest back.`;
             status.innerHTML = `<span style="color: #c8a35a;">cut at the ${cap}-character cap — the end of this entry was dropped.${room}</span>`;
             return;

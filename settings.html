@@ -247,7 +247,9 @@
                     of rows and by the length of the chat. At <b>Registry Scope: All</b> the rows sit in the
                     cacheable half of the request and the raise is nearly free; at <b>Present</b> it is paid
                     for every turn. Raising it does not lengthen a row already stored — re-seed, or edit the
-                    row by hand.
+                    row by hand. It is the only cap on a row: a row grown from a generated image gets the
+                    same number the seeding pass does, since a first guess with its wardrobe tail cut off is
+                    not a safer guess, only a shorter one.
                 </small>
 
                 <label class="checkbox_label" for="comfyinject_prompter_allow_registry_lora" title="Let a LoRA call stored in an appearance registry entry through to the image prompt. Off, every LoRA and embedding call is forbidden and stripped from the prompt rules.">
