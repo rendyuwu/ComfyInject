@@ -742,7 +742,7 @@ async function buildSeedContext({ structuredMode = null } = {}) {
 
     // The seeding pass's own last word, and deliberately not shared with the
     // directive pass's. The two ask different questions: generation policy is
-    // meaningless here, and a standing framing that only reaches the directive pass
+    // meaningless here, and framing that only reaches the directive pass
     // leaves the registry empty — which then degrades every image after it.
     const finalInstructions = substituteTrimmed(settings.prompter_seed_final_instructions);
     if (finalInstructions) {

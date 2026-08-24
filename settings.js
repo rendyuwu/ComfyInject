@@ -173,7 +173,7 @@ export const defaultSettings = Object.freeze({
     prompter_history_anchor: 0,
 
     // Quote this many previously generated image prompts back to the prompter as
-    // the PREVIOUS IMAGES section, so clothing, clothing state, accessories and injuries
+    // the PREVIOUS IMAGES section, so clothing state, accessories and injuries
     // carry across images instead of reverting to the registry's outfit. 0 = off,
     // clamped to 3.
     //
@@ -301,9 +301,9 @@ export const defaultSettings = Object.freeze({
 
     // The seeding pass is a second LLM call with its own job, so it gets its own
     // instructions, its own example, its own last word and its own user turn
-    // rather than sharing the directive pass's. A standing framing usually belongs in
-    // both: the seeding pass runs first, and a refusal there leaves the registry
-    // empty, which degrades every image after it.
+    // rather than sharing the directive pass's. Framing written for one pass
+    // usually belongs in both: the seeding pass runs first, and a refusal there
+    // leaves the registry empty, which degrades every image after it.
     prompter_seed_system_prompt: DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT,
     prompter_seed_example_tags: DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS,
     prompter_seed_final_instructions: "",

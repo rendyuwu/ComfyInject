@@ -295,7 +295,7 @@ const MAX_PREVIOUS_IMAGES = 3;
  * carry-over belongs in CONSTRAINTS or FINAL INSTRUCTIONS.
  *
  * The three sentences each do a job. "Not a template to copy" is the mitigation
- * for the section's one real risk. Naming clothing, clothing state, accessories and
+ * for the section's one real risk. Naming clothing state, accessories and
  * injuries is what makes it about state rather than identity. The last sentence
  * settles the precedence question the three continuity channels would otherwise
  * leave open.
@@ -306,7 +306,7 @@ const MAX_PREVIOUS_IMAGES = 3;
 function previousImagesDiscipline(count) {
     return [
         `The last image${count === 1 ? "" : "s"} generated in this chat, newest first. This is the state`,
-        "the scene was left in, not a template to copy: carry over clothing, clothing state,",
+        "the scene was left in, not a template to copy: carry over clothing state,",
         "accessories and injuries the story has not since changed, and vary the framing",
         "rather than repeating it. APPEARANCE REGISTRY governs who a character is; this",
         "section governs what has happened to her; the story overrides both.",

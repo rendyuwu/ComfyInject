@@ -344,7 +344,7 @@
                     <input id="comfyinject_prompter_previous_image_count" type="number" class="text_pole" min="0" max="3" step="1" style="width: 70px;" />
                 </div>
                 <small>
-                    Quotes this many previously generated prompts back to the prompter, so clothing, clothing state,
+                    Quotes this many previously generated prompts back to the prompter, so clothing state,
                     accessories and injuries carry across images instead of reverting to whatever the registry
                     says she normally wears. <code>1</code> is the useful value; <code>3</code> is the cap.
                     <b>Off by default, and that is a real trade:</b> showing a model its last answer is the
@@ -436,8 +436,8 @@
                         Rendered as the <b>last</b> section of the request, after the target message. Left out
                         entirely when empty. This is the recency-strong slot: a rule stated here is the last
                         thing the model reads before the ask, so it beats a contradicting rule in
-                        <b>Prompter Instructions</b>. The seeding pass has its own — a standing framing usually belongs
-                        in both.
+                        <b>Prompter Instructions</b>. The seeding pass has its own — framing written for one
+                        pass usually belongs in both.
                     </small>
                 </div>
 
@@ -502,7 +502,7 @@
                     <small>
                         The seeding pass's own <b>last</b> section, left out entirely when empty. Separate from
                         <b>Final Instructions</b> on purpose: generation policy means nothing to a pass that
-                        only extracts appearance tags. If you needed a standing framing up there you probably need one
+                        only extracts appearance tags. If you needed extra framing up there you probably need it
                         here too — the seeding call runs first, and a refusal leaves the registry empty, which
                         degrades every image after it.
                     </small>
