@@ -19,10 +19,41 @@ import {
     setRegistryEntry,
 } from "./appearance.js";
 import { getErrorChain, isTimeoutError } from "./llm.js";
-import { escapeHtml, openOverlay, overlayIsOpen } from "./overlay.js";
+import { escapeHtml, injectStyle, NARROW_QUERY, openOverlay, overlayIsOpen } from "./overlay.js";
 
 // How long after the last keystroke an edited row is written back.
 const EDIT_DEBOUNCE_MS = 400;
+
+// A row is a name column, a tags field and a remove button. Wide enough, they
+// sit on one line. Narrow — a phone held upright — a 150px name column leaves
+// the tags field too thin to read a line of tags in, so the name and the remove
+// button take the first line and the field gets the whole of the second.
+const ROW_CSS = `
+.comfyinject-appearance-row {
+    display: flex; gap: 8px; align-items: flex-start; padding: 8px 0;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+.comfyinject-appearance-add {
+    display: flex; gap: 8px; align-items: flex-start; padding: 12px 0 0 0;
+}
+.comfyinject-appearance-name {
+    width: 150px; flex-shrink: 0; word-break: break-word;
+}
+.comfyinject-appearance-tags {
+    flex: 1; min-width: 0; font-size: 12px;
+}
+.comfyinject-appearance-button {
+    flex-shrink: 0;
+}
+
+@media ${NARROW_QUERY} {
+    .comfyinject-appearance-row,
+    .comfyinject-appearance-add { flex-wrap: wrap; }
+    .comfyinject-appearance-name { width: auto; flex: 1 1 auto; min-width: 0; order: 1; }
+    .comfyinject-appearance-button { order: 2; }
+    .comfyinject-appearance-tags { order: 3; flex-basis: 100%; }
+}
+`;
 
 const SOURCE_LABELS = {
     seed: "seeded from card, lore + chat",
@@ -56,13 +87,10 @@ function renderSourceBadge(source) {
  */
 function buildRow(entry, rerender) {
     const row = document.createElement("div");
-    row.style.cssText = `
-        display: flex; gap: 8px; align-items: flex-start; padding: 8px 0;
-        border-bottom: 1px solid var(--SmartThemeBorderColor);
-    `;
+    row.className = "comfyinject-appearance-row";
 
     const left = document.createElement("div");
-    left.style.cssText = "width: 150px; flex-shrink: 0; word-break: break-word;";
+    left.className = "comfyinject-appearance-name";
 
     const nameLabel = document.createElement("div");
     nameLabel.style.cssText = "font-weight: bold; font-size: 13px;";
@@ -76,11 +104,10 @@ function buildRow(entry, rerender) {
     row.appendChild(left);
 
     const tags = document.createElement("textarea");
-    tags.className = "text_pole";
+    tags.className = "text_pole comfyinject-appearance-tags";
     tags.rows = 2;
     tags.value = entry.tags;
     tags.placeholder = "1girl, long silver hair, red eyes, black coat";
-    tags.style.cssText = "flex: 1; min-width: 0; font-size: 12px;";
     tags.addEventListener("input", () => {
         clearTimeout(pendingWrites.get(entry.key));
         pendingWrites.set(entry.key, setTimeout(() => {
@@ -95,10 +122,9 @@ function buildRow(entry, rerender) {
     row.appendChild(tags);
 
     const remove = document.createElement("div");
-    remove.className = "menu_button";
+    remove.className = "menu_button comfyinject-appearance-button";
     remove.title = `Remove ${entry.name} from the registry`;
     remove.innerHTML = `<i class="fa-solid fa-trash-can"></i>`;
-    remove.style.flexShrink = "0";
     remove.addEventListener("click", () => {
         clearTimeout(pendingWrites.get(entry.key));
         pendingWrites.delete(entry.key);
@@ -119,24 +145,21 @@ function buildRow(entry, rerender) {
  */
 function buildAddRow(rerender) {
     const row = document.createElement("div");
-    row.style.cssText = "display: flex; gap: 8px; align-items: flex-start; padding: 12px 0 0 0;";
+    row.className = "comfyinject-appearance-add";
 
     const name = document.createElement("input");
-    name.className = "text_pole";
+    name.className = "text_pole comfyinject-appearance-name";
     name.type = "text";
     name.placeholder = "Character name";
-    name.style.cssText = "width: 150px; flex-shrink: 0;";
 
     const tags = document.createElement("textarea");
-    tags.className = "text_pole";
+    tags.className = "text_pole comfyinject-appearance-tags";
     tags.rows = 2;
     tags.placeholder = "Appearance tags";
-    tags.style.cssText = "flex: 1; min-width: 0; font-size: 12px;";
 
     const add = document.createElement("div");
-    add.className = "menu_button menu_button_icon";
+    add.className = "menu_button menu_button_icon comfyinject-appearance-button";
     add.innerHTML = `<i class="fa-solid fa-plus"></i><span>Add</span>`;
-    add.style.flexShrink = "0";
     add.addEventListener("click", () => {
         const characterName = name.value.trim();
         const characterTags = tags.value.trim();
@@ -204,6 +227,8 @@ async function runSeeding(rerender) {
  * Opens the registry editor.
  */
 export function openAppearanceEditor() {
+    injectStyle("comfyinject-appearance-styles", ROW_CSS);
+
     const render = () => {
         const body = openOverlay("Appearance Registry", [
             { label: "Seed from card, lore + chat", icon: "fa-wand-magic-sparkles", onClick: () => runSeeding(render) },

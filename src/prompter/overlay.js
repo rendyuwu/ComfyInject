@@ -8,6 +8,57 @@ import { warnLog } from "./log.js";
 
 const OVERLAY_ID = "comfyinject-prompter-overlay";
 
+// Below this the overlay is one column wide: side-by-side label and field stops
+// paying for itself and the header's buttons no longer fit on the title's line.
+export const NARROW_QUERY = "(max-width: 700px)";
+
+/**
+ * Adds a stylesheet to the document once, keyed by id. The overlay's own layout
+ * needs real media queries — it has to survive a rotation without being rebuilt
+ * — and those cannot live in an inline style attribute.
+ * @param {string} id
+ * @param {string} css
+ */
+export function injectStyle(id, css) {
+    if (document.getElementById(id)) return;
+    const style = document.createElement("style");
+    style.id = id;
+    style.textContent = css;
+    document.head.appendChild(style);
+}
+
+const OVERLAY_CSS = `
+#${OVERLAY_ID} .comfyinject-overlay-header {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 12px; padding: 12px 20px; color: white; flex-shrink: 0;
+}
+#${OVERLAY_ID} .comfyinject-overlay-title {
+    font-size: 18px; font-weight: bold; flex: 1 1 auto; min-width: 0;
+}
+#${OVERLAY_ID} .comfyinject-overlay-actions {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+#${OVERLAY_ID} .comfyinject-overlay-close {
+    cursor: pointer; font-size: 24px; color: white; padding: 4px 12px; flex-shrink: 0;
+}
+#${OVERLAY_ID} .comfyinject-overlay-body {
+    flex: 1; overflow-y: auto; padding: 0 20px 20px 20px; color: white;
+}
+
+@media ${NARROW_QUERY} {
+    /* Title and close keep the first line to themselves; the action buttons
+       drop to a full-width row underneath and share it evenly. */
+    #${OVERLAY_ID} .comfyinject-overlay-header { gap: 8px; padding: 10px 12px; }
+    #${OVERLAY_ID} .comfyinject-overlay-title { font-size: 16px; order: 1; }
+    #${OVERLAY_ID} .comfyinject-overlay-close { order: 2; }
+    #${OVERLAY_ID} .comfyinject-overlay-actions { order: 3; flex-basis: 100%; }
+    #${OVERLAY_ID} .comfyinject-overlay-actions .menu_button {
+        flex: 1 1 auto; justify-content: center;
+    }
+    #${OVERLAY_ID} .comfyinject-overlay-body { padding: 0 12px 16px 12px; }
+}
+`;
+
 /**
  * @param {any} value
  * @returns {string}
@@ -76,11 +127,19 @@ function onKeyDown(event) {
  */
 export function openOverlay(title, actions = []) {
     closePrompterOverlay();
+    injectStyle(`${OVERLAY_ID}-styles`, OVERLAY_CSS);
 
     const overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
+    // The height is in viewport units, not per cent, on purpose. SillyTavern's
+    // own stylesheet puts a -webkit-transform and a perspective on <html>, which
+    // makes <html> — not the viewport — the containing block for anything
+    // fixed. On mobile widths its stylesheet also makes <body> fixed, so <html>
+    // has nothing in flow left and measures 0px tall; a height of 100% then
+    // resolves to zero and the overlay opens invisibly. Viewport units always
+    // measure the viewport, whatever the containing block turns out to be.
     overlay.style.cssText = `
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100dvh;
         background: rgba(0, 0, 0, 0.85); z-index: 9999;
         display: flex; flex-direction: column; overflow: hidden;
     `;
@@ -89,18 +148,15 @@ export function openOverlay(title, actions = []) {
     });
 
     const header = document.createElement("div");
-    header.style.cssText = `
-        display: flex; justify-content: space-between; align-items: center;
-        gap: 12px; padding: 12px 20px; color: white; flex-shrink: 0;
-    `;
+    header.className = "comfyinject-overlay-header";
 
     const titleEl = document.createElement("span");
-    titleEl.style.cssText = "font-size: 18px; font-weight: bold;";
+    titleEl.className = "comfyinject-overlay-title";
     titleEl.textContent = title;
     header.appendChild(titleEl);
 
     const actionBar = document.createElement("div");
-    actionBar.style.cssText = "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;";
+    actionBar.className = "comfyinject-overlay-actions";
     for (const action of actions) {
         const button = document.createElement("div");
         button.className = "menu_button menu_button_icon";
@@ -108,19 +164,19 @@ export function openOverlay(title, actions = []) {
         button.addEventListener("click", action.onClick);
         actionBar.appendChild(button);
     }
+    header.appendChild(actionBar);
 
+    // A sibling of the action bar rather than its last child, so the narrow
+    // layout can keep it on the title's line while the actions drop below.
     const closeBtn = document.createElement("div");
-    closeBtn.style.cssText = "cursor: pointer; font-size: 24px; color: white; padding: 4px 12px;";
+    closeBtn.className = "comfyinject-overlay-close";
     closeBtn.innerHTML = `<i class="fa-solid fa-xmark"></i>`;
     closeBtn.addEventListener("click", closePrompterOverlay);
-    actionBar.appendChild(closeBtn);
-    header.appendChild(actionBar);
+    header.appendChild(closeBtn);
     overlay.appendChild(header);
 
     const body = document.createElement("div");
-    body.style.cssText = `
-        flex: 1; overflow-y: auto; padding: 0 20px 20px 20px; color: white;
-    `;
+    body.className = "comfyinject-overlay-body";
     overlay.appendChild(body);
 
     document.body.appendChild(overlay);

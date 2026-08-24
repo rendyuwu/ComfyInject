@@ -85,8 +85,11 @@ export function openGallery() {
     // Build the modal overlay
     const overlay = document.createElement("div");
     overlay.id = "comfyinject-gallery-overlay";
+    // Viewport units rather than per cent for the height — see the same note in
+    // prompter/overlay.js. SillyTavern's <html> is a containing block for fixed
+    // children, and at mobile widths it measures 0px tall.
     overlay.style.cssText = `
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100dvh;
         background: rgba(0, 0, 0, 0.85); z-index: 9999;
         display: flex; flex-direction: column; overflow: hidden;
     `;
