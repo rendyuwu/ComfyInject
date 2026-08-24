@@ -9,11 +9,19 @@
 // probed with typeof, so an older or newer SillyTavern degrades to less material
 // instead of throwing.
 
+import { stripFailedTags } from "../failtag.js";
+import { replaceImageTags } from "../imgtag.js";
 import { substituteTrimmed } from "../macros.js";
 import { debugLog } from "./log.js";
 
 // The chat-bound lorebook is stored under this key in chat metadata.
 const CHAT_LOREBOOK_METADATA_KEY = "world_info";
+
+// Image markers are stripped from anything a prompter pass sees, along with the
+// <img> tags themselves and the placeholders left by a failed generation.
+// Leaving them in teaches the prompter to imitate the marker syntax it exists to
+// replace, and burns tokens on tag soup.
+const MARKER_REGEX = /\[\[IMG:\s*(.+?)\s*\]\]/gs;
 
 /**
  * @typedef {{ title: string, body: string }} Section
@@ -31,6 +39,24 @@ function ctx() {
  */
 function trim(value) {
     return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Removes ComfyInject's own output from message text: generated <img> tags, the
+ * placeholders left where a generation failed, and any [[IMG: ...]] marker the
+ * roleplay model wrote.
+ *
+ * Shared by both prompter passes rather than owned by either. The per-message
+ * pass strips history, world info scan text and the target message with it; the
+ * seeding pass strips the chat window it now reads.
+ *
+ * @param {any} text
+ * @returns {string}
+ */
+export function stripImages(text) {
+    return stripFailedTags(replaceImageTags(text, () => ""))
+        .replace(MARKER_REGEX, "")
+        .trim();
 }
 
 /**

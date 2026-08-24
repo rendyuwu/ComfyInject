@@ -7,21 +7,15 @@
 // SillyTavern degrades to a smaller prompt instead of throwing.
 
 import { MODULE_NAME } from "../../settings.js";
-import { parseImageTags, replaceImageTags } from "../imgtag.js";
+import { parseImageTags } from "../imgtag.js";
 import { substituteTrimmed } from "../macros.js";
 import { getImageData } from "../state.js";
 import { appearanceSectionIsVolatile, buildAppearanceSection } from "./appearance.js";
 import { debugLog } from "./log.js";
 import { schemaBelongsInPrompt } from "./llm.js";
 import { renderOutputRules } from "./schema.js";
-import { ensureCardsLoaded, getGroupName, listCastMembers, renderSections } from "./sources.js";
+import { ensureCardsLoaded, getGroupName, listCastMembers, renderSections, stripImages } from "./sources.js";
 import { parseTagList, stripBannedTags } from "./tags.js";
-
-// Image markers are stripped from anything the prompter sees, along with the
-// <img> tags themselves (via replaceImageTags). Leaving them in teaches it to
-// imitate the marker syntax it is meant to replace, and burns tokens on
-// base64-free but very long tag soup.
-const MARKER_REGEX = /\[\[IMG:\s*(.+?)\s*\]\]/gs;
 
 /**
  * @typedef {{ title: string, body: string }} Section
@@ -45,17 +39,6 @@ function getSettings() {
  */
 function trim(value) {
     return typeof value === "string" ? value.trim() : "";
-}
-
-/**
- * Removes ComfyInject's own image tags and markers from message text.
- * @param {any} text
- * @returns {string}
- */
-function stripImages(text) {
-    return replaceImageTags(text, () => "")
-        .replace(MARKER_REGEX, "")
-        .trim();
 }
 
 /**

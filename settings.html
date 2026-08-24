@@ -233,14 +233,36 @@
                     <span>Use the appearance registry</span>
                 </label>
 
-                <label class="checkbox_label" for="comfyinject_prompter_appearance_autoseed" title="Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards and every bound lorebook to fill the registry.">
+                <label class="checkbox_label" for="comfyinject_prompter_appearance_autoseed" title="Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards, every bound lorebook and the chat itself to fill the registry.">
                     <input id="comfyinject_prompter_appearance_autoseed" type="checkbox" />
-                    <span>Seed the registry automatically (one extra call per chat)</span>
+                    <span>Seed the registry automatically</span>
                 </label>
                 <small>
                     With seeding off the registry still fills itself from generated images, and you can
                     still seed it by hand from <b>Appearance Registry</b> below.
                 </small>
+
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_seed_history_count" style="width: 150px;">Seeding reads</label>
+                    <input id="comfyinject_prompter_seed_history_count" type="number" class="text_pole" min="0" max="200" step="1" style="width: 70px;" />
+                    <label for="comfyinject_prompter_seed_refresh_messages" style="width: 100px;">Re-seed every</label>
+                    <input id="comfyinject_prompter_seed_refresh_messages" type="number" class="text_pole" min="0" max="500" step="1" style="width: 70px;" />
+                </div>
+                <small>
+                    <b>Seeding reads</b> is how many of this chat's own messages the seeding pass sees on top of
+                    the cards and the lorebooks. It is what lets two chats on the same character card end up with
+                    different registries — who has actually turned up, and what this story has done to how they
+                    look. <code>0</code> reads the cards only, which produces the same registry in every chat.
+                    <b>Re-seed every</b> runs the pass again once the chat has grown by that many messages, since
+                    the first pass fires on the greeting and cannot know who walks in later; <code>0</code> seeds
+                    once per chat and never again. Each re-seed costs one LLM call, and hand-edited rows are
+                    never overwritten.
+                </small>
+
+                <label class="checkbox_label" for="comfyinject_prompter_seed_include_summary" title="Include the Summarize extension's running summary in the seeding pass.">
+                    <input id="comfyinject_prompter_seed_include_summary" type="checkbox" />
+                    <span>Seeding reads the running summary</span>
+                </label>
 
                 <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
                     <label for="comfyinject_prompter_appearance_scope">Registry Scope</label>

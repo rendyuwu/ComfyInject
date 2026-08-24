@@ -11,7 +11,7 @@ import {
     appearanceEnabled,
     clearRegistry,
     deleteRegistryEntry,
-    isRegistrySeeded,
+    describeSeedingState,
     listRegistryEntries,
     resolveCharacterKey,
     saveRegistry,
@@ -25,7 +25,7 @@ import { escapeHtml, openOverlay, overlayIsOpen } from "./overlay.js";
 const EDIT_DEBOUNCE_MS = 400;
 
 const SOURCE_LABELS = {
-    seed: "seeded from card + lore",
+    seed: "seeded from card, lore + chat",
     grown: "guessed from a generated image",
     user: "edited by hand",
 };
@@ -176,7 +176,7 @@ async function runSeeding(rerender) {
     }
 
     seeding = true;
-    toastr.info("Reading the character cards and lorebooks…", "ComfyInject");
+    toastr.info("Reading the character cards, lorebooks and this chat…", "ComfyInject");
     try {
         const result = await seedRegistry();
         if (!overlayIsOpen()) return;
@@ -206,7 +206,7 @@ async function runSeeding(rerender) {
 export function openAppearanceEditor() {
     const render = () => {
         const body = openOverlay("Appearance Registry", [
-            { label: "Seed from card + lore", icon: "fa-wand-magic-sparkles", onClick: () => runSeeding(render) },
+            { label: "Seed from card, lore + chat", icon: "fa-wand-magic-sparkles", onClick: () => runSeeding(render) },
             {
                 label: "Clear all",
                 icon: "fa-trash",
@@ -224,7 +224,7 @@ export function openAppearanceEditor() {
         intro.style.cssText = "margin-bottom: 12px; font-size: 13px; line-height: 1.6; opacity: 0.9;";
         intro.innerHTML = [
             "These tags are sent to the prompter with every request, so a character keeps the same hair, eyes and outfit across images.",
-            `Stored with this chat only. ${entries.length} entry(ies). Automatic seeding for this chat: ${isRegistrySeeded() ? "done" : "not run yet"}.`,
+            `Stored with this chat only — a new chat on the same character starts empty. ${entries.length} entry(ies). Automatic seeding for this chat: ${describeSeedingState()}.`,
             "Editing a row marks it <b>user</b>, and a user row is never overwritten by seeding or by a generated image.",
         ].join("<br />");
         body.appendChild(intro);

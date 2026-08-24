@@ -14,7 +14,11 @@
 //
 // Three ways an entry gets written:
 //   seed  — one extra LLM call on the first dedicated run in a chat, reading the
-//           character cards and every bound lorebook, triggering or not.
+//           character cards, every bound lorebook (triggering or not), and the
+//           chat itself. Repeated every prompter_seed_refresh_messages messages,
+//           because a pass that only ever fires on the greeting cannot know who
+//           walks in on message forty — and a registry that never revisits the
+//           chat is per-character in everything but where it is stored.
 //   grown — a character the prompter drew who was not in the registry yet. This
 //           is the brand-new NPC case: no card, no lorebook entry, nothing to
 //           seed from, but by the second image they have a stable entry.
@@ -34,11 +38,16 @@ import { substituteTrimmed } from "../macros.js";
 import { debugLog, warnLog } from "./log.js";
 import { runPrompter, schemaBelongsInPrompt } from "./llm.js";
 import { parseDirective } from "./schema.js";
-import { ensureCardsLoaded, listCastMembers, readBoundLore, renderSections } from "./sources.js";
+import { ensureCardsLoaded, listCastMembers, readBoundLore, renderSections, stripImages } from "./sources.js";
 import { parseTagList, stripBannedTags, tagFingerprint } from "./tags.js";
 
 export const APPEARANCE_METADATA_KEY = "comfyinject_appearance";
 export const APPEARANCE_SEEDED_KEY = "comfyinject_appearance_seeded";
+
+// How many visible messages the chat held when it was last seeded. The refresh
+// interval is measured against this rather than against the timestamp: a chat is
+// stale because the story moved on, not because time passed.
+export const APPEARANCE_SEEDED_COUNT_KEY = "comfyinject_appearance_seeded_count";
 
 // Structured output name for the seeding call.
 const SEED_SCHEMA_NAME = "ComfyInjectAppearance";
@@ -226,6 +235,7 @@ export function clearRegistry() {
     if (!metadata) return;
     metadata[APPEARANCE_METADATA_KEY] = {};
     delete metadata[APPEARANCE_SEEDED_KEY];
+    delete metadata[APPEARANCE_SEEDED_COUNT_KEY];
     saveRegistry();
 }
 
@@ -241,6 +251,65 @@ export function appearanceEnabled() {
 /** @returns {boolean} */
 export function isRegistrySeeded() {
     return !!ctx().chatMetadata?.[APPEARANCE_SEEDED_KEY];
+}
+
+/**
+ * Visible messages in the current chat — the yardstick the refresh interval is
+ * measured in.
+ * @returns {number}
+ */
+function visibleMessageCount() {
+    const chat = Array.isArray(ctx().chat) ? ctx().chat : [];
+    return chat.filter((/** @type {any} */ m) => m && !m.is_system).length;
+}
+
+/**
+ * True when this chat has moved far enough past its last seeding pass to be worth
+ * seeding again.
+ *
+ * A chat seeded on its greeting knows nothing about who walks into it later, and
+ * a once-per-chat registry is exactly as static as a per-character one — which is
+ * the complaint this interval exists to answer.
+ *
+ * A chat seeded before this counter existed has no baseline. It is treated as `0`
+ * rather than as "never refresh", so such a chat re-seeds once with the chat in
+ * view and then follows the interval like any other.
+ *
+ * @param {Record<string, any>} settings
+ * @returns {boolean}
+ */
+export function seedIsStale(settings) {
+    const interval = Math.max(0, Math.floor(Number(settings.prompter_seed_refresh_messages) || 0));
+    if (!interval) return false;
+
+    const seededAt = Number(ctx().chatMetadata?.[APPEARANCE_SEEDED_COUNT_KEY]);
+    const baseline = Number.isFinite(seededAt) ? seededAt : 0;
+    return visibleMessageCount() - baseline >= interval;
+}
+
+/**
+ * One line for the registry editor: whether this chat has been seeded, and how
+ * many messages are left before it is seeded again.
+ *
+ * The editor is where someone goes when the registry surprises them, and "the
+ * entries look like the last chat's" and "the entries are the last chat's" are
+ * two very different problems. This says which one they are looking at.
+ *
+ * @returns {string}
+ */
+export function describeSeedingState() {
+    if (!isRegistrySeeded()) return "not run yet";
+
+    const settings = getSettings();
+    const interval = Math.max(0, Math.floor(Number(settings.prompter_seed_refresh_messages) || 0));
+    if (!interval) return "done, and set to never run again in this chat";
+
+    const seededAt = Number(ctx().chatMetadata?.[APPEARANCE_SEEDED_COUNT_KEY]);
+    const baseline = Number.isFinite(seededAt) ? seededAt : 0;
+    const remaining = interval - (visibleMessageCount() - baseline);
+    return remaining <= 0
+        ? "done, and due to run again on the next image"
+        : `done, and due to run again in ${remaining} message(s)`;
 }
 
 /**
@@ -431,7 +500,56 @@ function renderSeedOutputRules({ exampleTags = "", includeSchema = true } = {}) 
 }
 
 /**
- * Builds the seeding prompt from the cast and every bound lorebook.
+ * The chat's own content, which is what makes a registry belong to a chat rather
+ * than to a character card.
+ *
+ * The cards and the lorebooks are identical in every chat that character is ever
+ * in, so a pass that reads only those writes the same answer every time — the
+ * registry is stored per chat but its contents are per character. These two
+ * sections are the difference: who has actually turned up, and what this
+ * particular story has done to how they look.
+ *
+ * Rendered last among the reference material, immediately before OUTPUT RULES, so
+ * recency backs up the instruction that the chat outranks the card.
+ *
+ * @param {Record<string, any>} settings
+ * @returns {Array<{title: string, body: string}>}
+ */
+function buildSeedChatSections(settings) {
+    const sections = [];
+    const chat = Array.isArray(ctx().chat) ? ctx().chat : [];
+
+    if (settings.prompter_seed_include_summary) {
+        // Newest first: the running summary lives on the last message that has
+        // one, the same way the directive pass finds it.
+        for (let i = chat.length - 1; i >= 0; i--) {
+            const summary = trim(chat[i]?.extra?.memory);
+            if (!summary) continue;
+            sections.push({ title: "RUNNING SUMMARY (of the story so far)", body: summary });
+            break;
+        }
+    }
+
+    const count = Math.max(0, Math.floor(Number(settings.prompter_seed_history_count) || 0));
+    if (!count) return sections;
+
+    const visible = chat.filter((/** @type {any} */ m) => m && !m.is_system);
+    const lines = visible.slice(-count).map((/** @type {any} */ message) => {
+        const speaker = message.name || (message.is_user ? "User" : "Character");
+        const text = stripImages(message.mes);
+        return text ? `${speaker}: ${text}` : "";
+    }).filter(Boolean);
+    if (!lines.length) return sections;
+
+    sections.push({
+        title: `CHAT SO FAR (last ${lines.length} of ${visible.length} messages)`,
+        body: lines.join("\n\n"),
+    });
+    return sections;
+}
+
+/**
+ * Builds the seeding prompt from the cast, every bound lorebook, and the chat.
  * @param {object} [options]
  * @param {"native" | "json" | null} [options.structuredMode] - Forces whether OUTPUT RULES restates the schema
  * @returns {Promise<{systemPrompt: string, sections: Array<{title: string, body: string}>, cast: string[]} | null>}
@@ -475,6 +593,8 @@ async function buildSeedContext({ structuredMode = null } = {}) {
         const name = trim(ctx().name1) || "User";
         sections.push({ title: `USER PERSONA — ${name}`, body: persona });
     }
+
+    sections.push(...buildSeedChatSections(settings));
 
     sections.push({
         title: "OUTPUT RULES",
@@ -542,8 +662,8 @@ export function validateAppearanceReply(parsed, { bannedTags = "" } = {}) {
 }
 
 /**
- * Runs the seeding pass: one LLM call over the cards and the bound lorebooks,
- * writing a registry entry per character it can describe.
+ * Runs the seeding pass: one LLM call over the cards, the bound lorebooks and the
+ * chat, writing a registry entry per character it can describe.
  *
  * @param {object} [options]
  * @param {AbortSignal | null} [options.signal]
@@ -610,10 +730,12 @@ export async function seedRegistry({ signal = null } = {}) {
     }
 }
 
-/** Records that this chat has had its one automatic seeding pass. */
+/** Records that this chat has just been seeded, and how far along it was. */
 function markSeeded() {
     const metadata = ctx().chatMetadata;
-    if (metadata) metadata[APPEARANCE_SEEDED_KEY] = Date.now();
+    if (!metadata) return;
+    metadata[APPEARANCE_SEEDED_KEY] = Date.now();
+    metadata[APPEARANCE_SEEDED_COUNT_KEY] = visibleMessageCount();
 }
 
 /** Flushes chat metadata immediately — a seeding pass is worth not losing. */
@@ -624,7 +746,15 @@ async function persistNow() {
 }
 
 /**
- * Seeds the registry the first time the dedicated path runs in a chat.
+ * Seeds the registry the first time the dedicated path runs in a chat, and again
+ * every `prompter_seed_refresh_messages` messages after that.
+ *
+ * The refresh is not a nicety. The first automatic pass fires on the first
+ * character message, which in a fresh chat is the greeting — at that point the
+ * chat has told the pass nothing, and a registry built from the card alone is the
+ * same registry every chat on that card would get. The interval is what lets the
+ * registry catch up with a story that has since introduced people and changed
+ * what they are wearing. Hand-edited entries are never touched by it.
  *
  * Failure is never fatal to the run that triggered it: the prompter works
  * perfectly well without a registry, it just has to describe the character from
@@ -638,7 +768,8 @@ export async function ensureRegistrySeeded({ signal = null } = {}) {
     const settings = getSettings();
     if (!settings.prompter_appearance_enabled) return false;
     if (!settings.prompter_appearance_autoseed) return false;
-    if (isRegistrySeeded() || seedingInFlight) return false;
+    if (seedingInFlight) return false;
+    if (isRegistrySeeded() && !seedIsStale(settings)) return false;
 
     const chatId = String(ctx().getCurrentChatId?.() || "");
     if (seedFailures.has(chatId)) return false;

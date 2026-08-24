@@ -274,6 +274,24 @@ export const defaultSettings = Object.freeze({
     prompter_seed_final_instructions: "",
     prompter_seed_user_turn: DEFAULT_PROMPTER_SEED_USER_TURN,
 
+    // How many of this chat's own messages the seeding pass reads, on top of the
+    // cards and the lorebooks. 0 = off, which is the pre-Phase-11 behaviour: a
+    // registry derived from the card alone, and therefore byte-identical in every
+    // chat that character is ever in. Non-zero is what lets two chats on the same
+    // card disagree about who is in them and what they are wearing.
+    prompter_seed_history_count: 20,
+
+    // Include the Summarize extension's running summary in the seeding pass. It is
+    // the only thing that reaches past the seeding history window in a long chat.
+    prompter_seed_include_summary: true,
+
+    // Re-run the seeding pass once the chat has grown by this many messages since
+    // the last one, so a registry seeded from a greeting is not the registry a
+    // chat is stuck with forty messages later. 0 = seed once per chat and never
+    // again. Costs one LLM call per interval; hand-edited entries are never
+    // touched by it.
+    prompter_seed_refresh_messages: 30,
+
     // Log the assembled prompt and the raw response to the console.
     prompter_debug: false,
 

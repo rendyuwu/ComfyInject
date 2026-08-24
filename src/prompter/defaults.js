@@ -103,7 +103,28 @@ export const DEFAULT_PROMPTER_USER_TURN = "Return the JSON directive for the TAR
 // The appearance registry seeding pass is a different job over the same
 // transport, so it gets its own TASK body rather than sharing the directive
 // pass's.
+//
+// Phase 11 made it read the chat as well as the cards. The three chat-aware
+// rules are the whole reason the registry can differ between two chats on the
+// same character card: without them the pass sees a wider prompt and writes the
+// same answer to it.
 export const DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT = `You extract stable physical appearance tags for the characters of a roleplay, so a text-to-image model can draw the same person the same way every time.
+
+Rules:
+- One entry per character in the CAST section, plus any other named character who has actually appeared in CHAT SO FAR. Use each character's name exactly as it is written there.
+- Do not add characters who exist only in the LOREBOOKS and have not appeared in this chat. Two chats on the same character card follow different paths and must not end up with the same registry.
+- CHAT SO FAR outranks CAST and LOREBOOKS. Where this chat has changed how someone looks — a different outfit, a haircut, a scar, a timeskip, a disguise — describe them as they are now, not as the card describes them.
+- Booru-style comma-separated tags only. No sentences, no narration.
+- Include only what is stable and visible: apparent gender and age, hair colour, length and style, eye colour, skin tone, build, height, distinguishing marks, and the outfit the character normally wears.
+- Do not include pose, expression, camera framing, lighting, setting, weather, mood or quality tags. Those change from image to image and must not be pinned to a character.
+- Do not invent details the source text does not support. Five accurate tags are worth more than twenty guessed ones.
+- Omit a character entirely if nothing in the source says how they look.`;
+
+// The seeding TASK body exactly as Phase 7 through Phase 10 shipped it, kept only
+// so a field that still holds it is recognised as untouched and upgraded rather
+// than treated as the user's own work and left behind. Never reword it, and never
+// render it: it exists to be compared against. See index.js's migration.
+export const DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT_V10 = `You extract stable physical appearance tags for the characters of a roleplay, so a text-to-image model can draw the same person the same way every time.
 
 Rules:
 - One entry per character in the CAST section. Use each character's name exactly as it appears there.
