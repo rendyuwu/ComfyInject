@@ -9,6 +9,7 @@
 //
 // The appearance registry editor is the third tool and lives in appearance-ui.js.
 
+import { listRegistryLoraCalls } from "./appearance.js";
 import { buildPrompterContext, countTokens } from "./context.js";
 import { runPrompter, getTransportInfo, canAbortPrompter, getErrorChain, isTimeoutError } from "./llm.js";
 import { parseDirective, validateDirective } from "./schema.js";
@@ -124,6 +125,9 @@ export async function openPrompterTest(messageIndex = null) {
             maxTags: settings.prompter_max_tags,
             bannedTags: settings.prompter_banned_tags,
             policy: settings.prompter_generate_policy,
+            // Same arguments the director passes, so Test Prompter shows the
+            // directive that would actually have been generated from.
+            registryLoras: listRegistryLoraCalls(),
         })
         : null;
 

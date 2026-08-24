@@ -25,6 +25,21 @@ export const MAX_PROMPT_CHARS = 2000;
 // tags should pay for the enforcement, not for the recital.
 export const MAX_STATED_BANNED_CHARS = 400;
 
+// A LoRA, LyCORIS, hypernetwork or embedding call in prompt-syntax form:
+// `<lora:character_style:0.7>`. Angle-bracketed and with no nesting, so unlike the
+// `<img>` tag regex in imgtag.js this needs no quote awareness — the only thing
+// that can appear between the brackets is the call itself.
+const LORA_CALL_REGEX = /<(?:lora|lyco|lycoris|hypernet|embedding):[^<>]+>/gi;
+
+/**
+ * Every LoRA-style call in a string, in the order they appear.
+ * @param {any} text
+ * @returns {string[]}
+ */
+export function extractLoraCalls(text) {
+    return String(text ?? "").match(LORA_CALL_REGEX) || [];
+}
+
 /**
  * Builds the directive schema from the live token Sets.
  * @returns {object} A JSON Schema describing one prompter reply
@@ -152,9 +167,10 @@ function renderBannedTagsLine(bannedTags) {
  * @param {number} [options.maxTags=0] - Tag cap to state; 0 states nothing
  * @param {any} [options.bannedTags] - Banned tags to recite; empty states nothing
  * @param {boolean} [options.includeSchema=true] - Restate the schema JSON in the prompt
+ * @param {boolean} [options.allowRegistryLora=false] - Permit LoRA calls copied from the registry
  * @returns {string}
  */
-export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags = 0, bannedTags = "", includeSchema = true } = {}) {
+export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags = 0, bannedTags = "", includeSchema = true, allowRegistryLora = false } = {}) {
     const cap = Math.max(1, Number(maxImages) || 1);
     const tagCap = Math.max(0, Math.floor(Number(maxTags) || 0));
     const example = {
@@ -192,7 +208,17 @@ export function renderOutputRules({ maxImages = 1, examplePrompt = "", maxTags =
         // stop telling the model that LoRA calls and attention weights are
         // forbidden, because that string goes straight into the workflow JSON
         // fillWorkflow substitutes into.
-        `- "prompt" contains no seeds, no attention weights, no LoRA or embedding calls, no negative-prompt content and no {{macros}}. Negative prompt, prefix and suffix tags are added by the extension.`,
+        //
+        // The one carve-out is a LoRA call the appearance registry already holds.
+        // A checkpoint that renders some feature badly needs the same call pinned
+        // to the same character in every image, which is exactly what the registry
+        // is for — so the setting relaxes the clause to "copied, never invented"
+        // rather than deleting it. Inventing one is still forbidden either way,
+        // and validateDirective re-inserts a registry call the model drops, so the
+        // permission does not depend on the model honouring this line.
+        allowRegistryLora
+            ? `- "prompt" contains no seeds, no attention weights, no negative-prompt content and no {{macros}}. The only LoRA or embedding calls allowed are ones copied verbatim from APPEARANCE REGISTRY for a character in that image — never invent one, never change its weight. Negative prompt, prefix and suffix tags are added by the extension.`
+            : `- "prompt" contains no seeds, no attention weights, no LoRA or embedding calls, no negative-prompt content and no {{macros}}. Negative prompt, prefix and suffix tags are added by the extension.`,
         // Stated as well as enforced. The cap is enforced in validateDirective
         // because a small model follows instructions poorly — but a silent cap
         // keeps the first N tags, and "most important first" is a convention, not
@@ -270,15 +296,27 @@ function capTags(prompt, maxTags) {
  * @param {number} [options.maxTags=0] - Hard cap on tags per prompt; 0 disables it
  * @param {any} [options.bannedTags] - Tags to strip; comma-separated string or array
  * @param {"always" | "judge"} [options.policy="judge"] - Whether the model is the judge
+ * @param {Array<{name: string, loras: string[]}>} [options.registryLoras] - Registry-pinned LoRA calls to guarantee
  * @returns {{generate: boolean, reason: string, images: Array<{prompt: string, ar: string, shot: string, characters: string[]}>, notes: string[]}}
  */
-export function validateDirective(parsed, { maxImages = 1, maxTags = 0, bannedTags = "", policy = "judge" } = {}) {
+export function validateDirective(parsed, { maxImages = 1, maxTags = 0, bannedTags = "", policy = "judge", registryLoras = [] } = {}) {
     const notes = [];
     const cap = Math.max(1, Number(maxImages) || 1);
     const alwaysGenerate = policy === "always";
     // Taken as an argument rather than read from settings, so this module stays
     // free of a ctx() accessor and testable without a mocked SillyTavern.
     const banned = parseTagList(bannedTags).fingerprints;
+
+    // Registry-pinned LoRA calls, keyed by lowercased character name. Empty
+    // unless the caller passed any, which it only does while the setting that
+    // permits registry LoRA calls is on — so the default path is untouched.
+    /** @type {Map<string, string[]>} */
+    const loraByCharacter = new Map();
+    for (const source of Array.isArray(registryLoras) ? registryLoras : []) {
+        const name = String(source?.name ?? "").trim().toLowerCase();
+        const calls = Array.isArray(source?.loras) ? source.loras.filter(Boolean) : [];
+        if (name && calls.length) loraByCharacter.set(name, calls);
+    }
 
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         return { generate: false, reason: "", images: [], notes: ["Reply was not a JSON object — treated as skip."] };
@@ -367,6 +405,38 @@ export function validateDirective(parsed, { maxImages = 1, maxTags = 0, bannedTa
             ? entry.characters
             : (typeof entry.characters === "string" ? [entry.characters] : []);
         const characters = rawCharacters.map(name => String(name ?? "").trim()).filter(Boolean);
+
+        // Put back a registry-pinned LoRA call the model dropped. This is what
+        // makes the pin a guarantee rather than a request: a call the user pinned
+        // to a character has to reach every image that character is in, and a
+        // model that ignored the instruction is exactly the model the pin exists
+        // for.
+        //
+        // Deliberately after the tag cap and not counted by it. The cap bounds
+        // scene complexity, which is the model's work; a pinned call is the
+        // user's, and dropping their call to make room for the model's twentieth
+        // tag has the priority backwards. The character cap still applies, since
+        // that one protects fillWorkflow's string substitution.
+        if (loraByCharacter.size) {
+            const wanted = [];
+            for (const name of characters) {
+                for (const call of loraByCharacter.get(name.toLowerCase()) || []) {
+                    if (!wanted.includes(call)) wanted.push(call);
+                }
+            }
+
+            const present = new Set(extractLoraCalls(prompt).map(call => call.toLowerCase()));
+            const missing = wanted.filter(call => !present.has(call.toLowerCase()));
+            if (missing.length) {
+                const restored = `${prompt}, ${missing.join(", ")}`;
+                if (restored.length <= MAX_PROMPT_CHARS) {
+                    prompt = restored;
+                    notes.push(`Re-inserted ${missing.length} registry LoRA call${missing.length === 1 ? "" : "s"} the reply dropped: ${missing.join(", ")}.`);
+                } else {
+                    notes.push(`No room left for ${missing.length} registry LoRA call${missing.length === 1 ? "" : "s"} — the prompt is at the ${MAX_PROMPT_CHARS}-character cap.`);
+                }
+            }
+        }
 
         images.push({ prompt, ar, shot, characters });
     }

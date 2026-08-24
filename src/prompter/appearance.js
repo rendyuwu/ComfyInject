@@ -27,6 +27,16 @@
 // A "user" entry is never overwritten by seeding or growth. That is the whole
 // point of the registry being editable: a bad automatic guess is fixable by hand
 // instead of by re-rolling the model.
+//
+// A "user" entry with no tags is a tombstone: the key exists, deliberately blank.
+// buildAppearanceSection skips it because it has no tags, and both automatic
+// sources refuse it because it is "user", so it is the one durable way to say
+// "never write an entry for this name". Deleting an entry outright is not durable
+// — the next seeding pass simply writes it again. This is what a card that is a
+// world, a narrator or a game master rather than a person needs, since such a
+// card is still in CAST and the seeding pass will keep attributing a body to it.
+// Only a hand edit may store a blank entry; an automatic source that produces
+// nothing usable is still dropped rather than written empty.
 
 import {
     MODULE_NAME,
@@ -37,7 +47,7 @@ import {
 import { substituteTrimmed } from "../macros.js";
 import { debugLog, warnLog } from "./log.js";
 import { runPrompter, schemaBelongsInPrompt } from "./llm.js";
-import { parseDirective } from "./schema.js";
+import { extractLoraCalls, parseDirective } from "./schema.js";
 import { ensureCardsLoaded, listCastMembers, readBoundLore, renderSections, stripImages } from "./sources.js";
 import { parseTagList, stripBannedTags, tagFingerprint } from "./tags.js";
 
@@ -54,12 +64,15 @@ const SEED_SCHEMA_NAME = "ComfyInjectAppearance";
 
 // A registry entry is reference data, not a prompt. These caps keep a runaway
 // reply from turning every later request into a wall of tags.
-const MAX_TAGS_CHARS = 400;
+//
+// Exported so the registry editor can name the number it is reporting against
+// rather than hardcoding a second copy of it.
+export const MAX_TAGS_CHARS = 400;
 const MAX_ENTRIES = 40;
 
 // Growth takes its tags from the prompt of the image that introduced the
 // character, so it is capped harder — it is a first guess, not a considered one.
-const MAX_GROWN_TAGS_CHARS = 240;
+export const MAX_GROWN_TAGS_CHARS = 240;
 
 // The one instruction the registry needs, kept in the section body so it is sent
 // exactly when the data is. Not a setting: it is the contract that makes the
@@ -94,12 +107,21 @@ function trim(value) {
 }
 
 /**
- * Normalizes a tag string: comma-separated, deduplicated, trimmed, capped.
+ * Normalizes a tag string: comma-separated, deduplicated, trimmed, capped — and
+ * says how much the cap took.
+ *
+ * The dropped count is the whole reason this exists next to normalizeTags(). A
+ * silent cut here is indistinguishable from a model that simply stopped writing:
+ * an entry that comes back ending in `cream blouse, cream skirt` with no legwear,
+ * footwear or accessory looks like a lazy reply and is actually a truncation. Any
+ * seeding configuration that asks for a full wardrobe ladder sits right on this
+ * limit, so the caller has to be able to say so.
+ *
  * @param {any} value
- * @param {number} [maxChars]
- * @returns {string}
+ * @param {number} [maxChars] - 0 disables the cap
+ * @returns {{tags: string, dropped: number}}
  */
-function normalizeTags(value, maxChars = MAX_TAGS_CHARS) {
+function normalizeTagsInfo(value, maxChars = MAX_TAGS_CHARS) {
     const seen = new Set();
     const tags = [];
 
@@ -114,14 +136,37 @@ function normalizeTags(value, maxChars = MAX_TAGS_CHARS) {
         tags.push(tag);
     }
 
-    let out = tags.join(", ");
-    if (out.length > maxChars) {
-        // Cut on a tag boundary rather than mid-word.
-        out = out.slice(0, maxChars);
-        const lastComma = out.lastIndexOf(",");
-        out = (lastComma > 0 ? out.slice(0, lastComma) : out).trim();
-    }
-    return out;
+    const full = tags.join(", ");
+    if (!maxChars || full.length <= maxChars) return { tags: full, dropped: 0 };
+
+    // Cut on a tag boundary rather than mid-word.
+    let out = full.slice(0, maxChars);
+    const lastComma = out.lastIndexOf(",");
+    out = (lastComma > 0 ? out.slice(0, lastComma) : out).trim();
+    return { tags: out, dropped: full.length - out.length };
+}
+
+/**
+ * normalizeTagsInfo() when the caller only wants the tags, and warns on a cut so
+ * a truncation is never entirely silent.
+ * @param {any} value
+ * @param {number} [maxChars] - 0 disables the cap
+ * @param {string} [label] - Who the tags belong to, for the warning
+ * @returns {string}
+ */
+function normalizeTags(value, maxChars = MAX_TAGS_CHARS, label = "") {
+    const result = normalizeTagsInfo(value, maxChars);
+    if (result.dropped) warnTruncation(label, maxChars, result.dropped);
+    return result.tags;
+}
+
+/**
+ * @param {string} label
+ * @param {number} maxChars
+ * @param {number} dropped
+ */
+function warnTruncation(label, maxChars, dropped) {
+    warnLog(`the appearance tags for "${label || "?"}" hit the ${maxChars}-character cap — ${dropped} character(s) were dropped from the end. Shorten what the seeding pass is asked for, or edit the entry by hand.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +200,13 @@ function mutableRegistry() {
 
 /**
  * Registry entries in display order.
- * @returns {Array<{key: string, name: string, tags: string, source: string, updatedAt: number}>}
+ *
+ * `truncated` is whether the cap cut this entry's tags when it was written, so
+ * the editor can mark a row that stops mid-wardrobe as cut rather than as the
+ * model's own idea of complete. Entries written before the flag existed report
+ * false, which is the honest answer: nothing recorded it either way.
+ *
+ * @returns {Array<{key: string, name: string, tags: string, source: string, updatedAt: number, truncated: boolean}>}
  */
 export function listRegistryEntries() {
     const entries = [];
@@ -167,9 +218,32 @@ export function listRegistryEntries() {
             tags: trim(value.tags),
             source: trim(value.source) || "seed",
             updatedAt: Number(value.updatedAt) || 0,
+            truncated: !!value.truncated,
         });
     }
     return entries.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The LoRA-style calls the registry has pinned, per character.
+ *
+ * Empty unless both the registry and `prompter_allow_registry_lora` are on, so
+ * the default install never carries a call past the validator. What this feeds is
+ * validateDirective's re-insertion: a call the user pinned to a character reaches
+ * every image that character is in whether or not the model copied it.
+ *
+ * @returns {Array<{name: string, loras: string[]}>}
+ */
+export function listRegistryLoraCalls() {
+    const settings = getSettings();
+    if (!settings.prompter_appearance_enabled || !settings.prompter_allow_registry_lora) return [];
+
+    const out = [];
+    for (const entry of listRegistryEntries()) {
+        const loras = extractLoraCalls(entry.tags);
+        if (loras.length) out.push({ name: entry.name, loras });
+    }
+    return out;
 }
 
 /** Persists chat metadata. Debounced — the registry is never urgent. */
@@ -184,6 +258,11 @@ export function saveRegistry() {
  *
  * A hand-edited entry is never overwritten by an automatic source — the caller
  * gets `false` back and is expected to carry on rather than treat it as an error.
+ *
+ * An entry with no usable tags is refused from an automatic source, because an
+ * unusable reply is not worth storing. A hand edit may store one: that is the
+ * tombstone described at the top of this file, and the only durable way to keep a
+ * key out of every later request.
  *
  * @param {string} key
  * @param {object} entry
@@ -206,14 +285,17 @@ export function setRegistryEntry(key, { name, tags, source }) {
         return false;
     }
 
-    const cleanTags = normalizeTags(tags, source === "grown" ? MAX_GROWN_TAGS_CHARS : MAX_TAGS_CHARS);
-    if (!cleanTags) return false;
+    const maxChars = source === "grown" ? MAX_GROWN_TAGS_CHARS : MAX_TAGS_CHARS;
+    const clean = normalizeTagsInfo(tags, maxChars);
+    if (clean.dropped) warnTruncation(trim(name) || key, maxChars, clean.dropped);
+    if (!clean.tags && source !== "user") return false;
 
     registry[key] = {
         name: trim(name) || key,
-        tags: cleanTags,
+        tags: clean.tags,
         source,
         updatedAt: Date.now(),
+        truncated: clean.dropped > 0,
     };
     return true;
 }
@@ -653,7 +735,12 @@ export function validateAppearanceReply(parsed, { bannedTags = "" } = {}) {
         }
         // An entry left with nothing is dropped rather than written empty — the
         // same rule an unusable reply has always taken.
-        const tags = normalizeTags(stripped.prompt);
+        //
+        // Uncapped on purpose: setRegistryEntry applies the cap, and it has to be
+        // the only place that does. Capping twice means the second call sees text
+        // that already fits and records the entry as untruncated, which is exactly
+        // the silence gap 2 was about.
+        const tags = normalizeTags(stripped.prompt, 0);
         if (!name || !tags) continue;
         out.push({ name, tags });
     }
@@ -813,6 +900,11 @@ const TRANSIENT_TAG_PATTERNS = [
 /**
  * Reduces an image prompt to the tags that plausibly describe the character
  * rather than the moment.
+ *
+ * Uncapped, for the same reason validateAppearanceReply is: setRegistryEntry
+ * applies MAX_GROWN_TAGS_CHARS to a "grown" write, and one cap in one place is
+ * what lets the entry record that it was cut.
+ *
  * @param {string} prompt
  * @returns {string}
  */
@@ -825,7 +917,7 @@ export function distillAppearanceTags(prompt) {
             && tag.length <= 40
             && !TRANSIENT_TAG_PATTERNS.some(pattern => pattern.test(tag)));
 
-    return normalizeTags(kept.join(", "), MAX_GROWN_TAGS_CHARS);
+    return normalizeTags(kept.join(", "), 0);
 }
 
 /**

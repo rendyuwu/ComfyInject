@@ -250,6 +250,26 @@ export const defaultSettings = Object.freeze({
     // same character keeps the same hair, eyes and outfit across images.
     prompter_appearance_enabled: true,
 
+    // Let a LoRA, LyCORIS, hypernetwork or embedding call stored in an appearance
+    // registry entry reach the image prompt.
+    //
+    // OUTPUT RULES otherwise forbids all of them, and that ban has no escape
+    // hatch: it lives in the cacheable contract precisely so a user rewriting
+    // their Prompter Instructions cannot delete it. But a checkpoint that renders
+    // some feature badly needs the same call pinned to the same character in every
+    // image, which is what the registry is for — so this relaxes the clause to
+    // "copied verbatim from the registry, never invented" rather than removing it,
+    // and validateDirective re-inserts a pinned call the model dropped so the
+    // guarantee does not rest on the model reading the line.
+    //
+    // Off by default: the ban is right for every install that has not pinned a
+    // call, and a relaxed clause on an empty registry only permits invention.
+    // Needs prompter_appearance_enabled as well — there is nothing to copy from
+    // otherwise. The alternative remains prepend_prompt, which is added after the
+    // prompter and so escapes this entirely, at the cost of being one global
+    // string rather than per character.
+    prompter_allow_registry_lora: false,
+
     // "all"     = inject every registry entry on every request
     // "present" = inject only the cast plus characters named in the target
     //             message or the history window

@@ -13,6 +13,9 @@ import {
     deleteRegistryEntry,
     describeSeedingState,
     listRegistryEntries,
+    MAX_GROWN_TAGS_CHARS,
+    MAX_TAGS_CHARS,
+    readRegistry,
     resolveCharacterKey,
     saveRegistry,
     seedRegistry,
@@ -81,7 +84,12 @@ function renderSourceBadge(source) {
 /**
  * One editable row. The tags field writes back on a debounce and flips the
  * entry's source to "user", which locks it against both automatic sources.
- * @param {{key: string, name: string, tags: string, source: string}} entry
+ *
+ * Clearing the field is a write, not a no-op: it stores the entry blank, which is
+ * the tombstone that keeps a name out of every later request permanently. Deleting
+ * the row instead only lasts until the next seeding pass rewrites it.
+ *
+ * @param {{key: string, name: string, tags: string, source: string, truncated: boolean}} entry
  * @param {() => void} rerender
  * @returns {HTMLElement}
  */
@@ -100,30 +108,81 @@ function buildRow(entry, rerender) {
     badge.style.marginTop = "2px";
     badge.innerHTML = renderSourceBadge(entry.source);
 
-    left.append(nameLabel, badge);
+    // Whatever the row is doing that its tags do not show: suppressed, or cut by
+    // the cap. A truncated entry is the one that reads as a lazy model reply and
+    // is actually a character budget, so it gets said out loud here as well as in
+    // the console.
+    const status = document.createElement("div");
+    status.style.cssText = "margin-top: 3px; font-size: 11px; line-height: 1.4;";
+
+    const state = { tags: entry.tags, source: entry.source, truncated: entry.truncated };
+
+    const paintStatus = () => {
+        if (!state.tags) {
+            status.innerHTML = `<span style="color: var(--SmartThemeQuoteColor);">suppressed — nothing is sent for this name, and neither seeding nor a generated image will refill it</span>`;
+            return;
+        }
+        if (state.truncated) {
+            const cap = state.source === "grown" ? MAX_GROWN_TAGS_CHARS : MAX_TAGS_CHARS;
+            status.innerHTML = `<span style="color: #c8a35a;">cut at the ${cap}-character cap — the end of this entry was dropped</span>`;
+            return;
+        }
+        status.innerHTML = "";
+    };
+    paintStatus();
+
+    left.append(nameLabel, badge, status);
     row.appendChild(left);
 
     const tags = document.createElement("textarea");
     tags.className = "text_pole comfyinject-appearance-tags";
     tags.rows = 2;
     tags.value = entry.tags;
-    tags.placeholder = "1girl, long silver hair, red eyes, black coat";
+    tags.placeholder = "1girl, long silver hair, red eyes, black coat — or empty to suppress this name";
+
+    const writeTags = (/** @type {string} */ value) => {
+        setRegistryEntry(entry.key, { name: entry.name, tags: value, source: "user" });
+        saveRegistry();
+        // Re-read rather than trusting `value`: the cap may have shortened it, and
+        // the row has to report what was stored, not what was typed.
+        const stored = readRegistry()[entry.key];
+        state.tags = String(stored?.tags ?? "").trim();
+        state.source = "user";
+        state.truncated = !!stored?.truncated;
+        badge.innerHTML = renderSourceBadge("user");
+        paintStatus();
+    };
+
     tags.addEventListener("input", () => {
         clearTimeout(pendingWrites.get(entry.key));
         pendingWrites.set(entry.key, setTimeout(() => {
             pendingWrites.delete(entry.key);
-            const value = tags.value.trim();
-            if (!value) return;
-            setRegistryEntry(entry.key, { name: entry.name, tags: value, source: "user" });
-            saveRegistry();
-            badge.innerHTML = renderSourceBadge("user");
+            writeTags(tags.value.trim());
         }, EDIT_DEBOUNCE_MS));
     });
     row.appendChild(tags);
 
+    const suppress = document.createElement("div");
+    suppress.className = "menu_button comfyinject-appearance-button";
+    suppress.title = `Suppress ${entry.name}: keep the row but send nothing, and stop seeding from ever writing it again`;
+    suppress.innerHTML = `<i class="fa-solid fa-eye-slash"></i>`;
+    suppress.addEventListener("click", () => {
+        clearTimeout(pendingWrites.get(entry.key));
+        pendingWrites.delete(entry.key);
+        if (!tags.value.trim()) {
+            toastr.info(`${entry.name} is already suppressed.`, "ComfyInject");
+            return;
+        }
+        tags.value = "";
+        writeTags("");
+    });
+    row.appendChild(suppress);
+
     const remove = document.createElement("div");
     remove.className = "menu_button comfyinject-appearance-button";
-    remove.title = `Remove ${entry.name} from the registry`;
+    // Said plainly, because the two buttons look interchangeable and are not: a
+    // deleted row is rewritten by the next seeding pass, a suppressed one is not.
+    remove.title = `Remove ${entry.name} from the registry. Seeding may write it again — use suppress to refuse it for good`;
     remove.innerHTML = `<i class="fa-solid fa-trash-can"></i>`;
     remove.addEventListener("click", () => {
         clearTimeout(pendingWrites.get(entry.key));
@@ -140,6 +199,11 @@ function buildRow(entry, rerender) {
 /**
  * The add-a-character row. A hand-added entry starts out as "user" — the point
  * of adding one by hand is that the automatic sources got it wrong or missed it.
+ *
+ * A name with no tags adds a suppressed row, which is how a card that is a world,
+ * a narrator or a game master gets refused *before* the first seeding pass invents
+ * a body for it rather than after.
+ *
  * @param {() => void} rerender
  * @returns {HTMLElement}
  */
@@ -155,7 +219,7 @@ function buildAddRow(rerender) {
     const tags = document.createElement("textarea");
     tags.className = "text_pole comfyinject-appearance-tags";
     tags.rows = 2;
-    tags.placeholder = "Appearance tags";
+    tags.placeholder = "Appearance tags, or empty to suppress the name";
 
     const add = document.createElement("div");
     add.className = "menu_button menu_button_icon comfyinject-appearance-button";
@@ -163,8 +227,8 @@ function buildAddRow(rerender) {
     add.addEventListener("click", () => {
         const characterName = name.value.trim();
         const characterTags = tags.value.trim();
-        if (!characterName || !characterTags) {
-            toastr.warning("A name and at least one tag are needed.", "ComfyInject");
+        if (!characterName) {
+            toastr.warning("A name is needed.", "ComfyInject");
             return;
         }
 
@@ -179,6 +243,9 @@ function buildAddRow(rerender) {
             return;
         }
         saveRegistry();
+        if (!characterTags) {
+            toastr.info(`${characterName} is suppressed — nothing will be sent for that name.`, "ComfyInject");
+        }
         rerender();
     });
 
@@ -251,6 +318,7 @@ export function openAppearanceEditor() {
             "These tags are sent to the prompter with every request, so a character keeps the same hair, eyes and outfit across images.",
             `Stored with this chat only — a new chat on the same character starts empty. ${entries.length} entry(ies). Automatic seeding for this chat: ${describeSeedingState()}.`,
             "Editing a row marks it <b>user</b>, and a user row is never overwritten by seeding or by a generated image.",
+            "Emptying a row's tags — or the <b>eye</b> button — <b>suppresses</b> that name: the row stays, nothing is sent for it, and seeding will not write it again. That is what a card that is a world, a narrator or a game master rather than a person wants. The <b>bin</b> only deletes, and the next seeding pass may put the row straight back.",
         ].join("<br />");
         body.appendChild(intro);
 

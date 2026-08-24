@@ -76,6 +76,8 @@ These exist because each was violated once and broke something:
 - **Re-resolve the message index after every `await`.** Messages shift while ComfyUI works; use `dom.js:findIndexBySendDate()` and bail if the message is gone.
 - **`cleanup.js`'s `saved_images` registry is deliberately absent from `defaultSettings`**, so the settings Reset button does not orphan every image the extension ever saved.
 - **Retry buttons and the per-message prompter wand are pure DOM injection, never persisted** — SillyTavern's sanitizer strips custom markup out of saved message text.
+- **A `user` appearance-registry entry with no tags is a tombstone, not a bug.** It is the only durable way to refuse a name: deleting a row just invites the next seeding pass to rewrite it. `setRegistryEntry()` accepts an empty write only from `source: "user"`; `buildAppearanceSection()` skips it because it has no tags. This is what a card that is a world, a narrator or a game master rather than a person needs.
+- **`setRegistryEntry()` is the only place a registry entry's character cap is applied.** `validateAppearanceReply()` and `distillAppearanceTags()` deliberately pass `maxChars: 0`. Capping twice means the second call sees text that already fits, so the entry gets stored as untruncated and the cut goes unreported — which was the original bug.
 
 ### Dedicated prompter internals (`src/prompter/`)
 
@@ -93,7 +95,7 @@ These exist because each was violated once and broke something:
 Two structural decisions to preserve:
 
 - **The request is split on the static/volatile line for prompt caching.** `messages[0]` (system) holds only what does not change between character messages; `messages[1]` (user) holds history, summary, world info and the target message. Moving a section across that line changes what a caching backend charges. `Registry Scope: Present` deliberately moves the registry to the volatile half.
-- **The output contract lives in `OUTPUT RULES`, not in the user-editable Prompter Instructions**, so a user rewriting their instructions cannot delete the contract.
+- **The output contract lives in `OUTPUT RULES`, not in the user-editable Prompter Instructions**, so a user rewriting their instructions cannot delete the contract. The one relaxation is `prompter_allow_registry_lora`, which swaps the LoRA clause for "copied verbatim from the registry, never invented" and has `validateDirective()` re-insert a pinned call the model dropped — a setting and a mechanism, never a prose exception the user has to argue into `CONSTRAINTS`.
 
 Prompter fields are bound declaratively through the `PROMPTER_FIELDS` table at the top of `src/ui.js` (`[selector, settings key, kind]`). Add a new prompter setting by adding a row there, a key in `defaultSettings`, and the markup in `settings.html` — not a bespoke handler.
 

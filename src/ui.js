@@ -52,6 +52,7 @@ const PROMPTER_FIELDS = [
     ["#comfyinject_prompter_include_author_note", "prompter_include_author_note", "checkbox"],
     ["#comfyinject_prompter_include_summary", "prompter_include_summary", "checkbox"],
     ["#comfyinject_prompter_appearance_enabled", "prompter_appearance_enabled", "checkbox"],
+    ["#comfyinject_prompter_allow_registry_lora", "prompter_allow_registry_lora", "checkbox"],
     ["#comfyinject_prompter_appearance_autoseed", "prompter_appearance_autoseed", "checkbox"],
     ["#comfyinject_prompter_seed_include_summary", "prompter_seed_include_summary", "checkbox"],
     ["#comfyinject_prompter_debug", "prompter_debug", "checkbox"],

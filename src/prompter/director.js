@@ -33,7 +33,7 @@ import { buildFailedTag, countFailedTags } from "../failtag.js";
 import { isTimeoutError as isFetchTimeout } from "../http.js";
 import { buildImgTag } from "../imgtag.js";
 import { notifyFailure, notifyWarning } from "../notify.js";
-import { ensureRegistrySeeded, growRegistry, resetAppearanceState } from "./appearance.js";
+import { ensureRegistrySeeded, growRegistry, listRegistryLoraCalls, resetAppearanceState } from "./appearance.js";
 import { buildPrompterContext } from "./context.js";
 import { getErrorChain, isTimeoutError, runPrompter } from "./llm.js";
 import { parseDirective, validateDirective } from "./schema.js";
@@ -190,6 +190,9 @@ async function runDirector(messageIndex, { manual }) {
             maxTags: settings.prompter_max_tags,
             bannedTags: settings.prompter_banned_tags,
             policy: settings.prompter_generate_policy,
+            // Empty unless the registry-LoRA setting is on. When it is, a call the
+            // user pinned to a character is put back if the reply dropped it.
+            registryLoras: listRegistryLoraCalls(),
         });
         debugLog("validated directive", {
             transport: result.transport,

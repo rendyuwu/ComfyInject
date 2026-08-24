@@ -233,6 +233,24 @@
                     <span>Use the appearance registry</span>
                 </label>
 
+                <label class="checkbox_label" for="comfyinject_prompter_allow_registry_lora" title="Let a LoRA call stored in an appearance registry entry through to the image prompt. Off, every LoRA and embedding call is forbidden and stripped from the prompt rules.">
+                    <input id="comfyinject_prompter_allow_registry_lora" type="checkbox" />
+                    <span>Allow LoRA calls pinned in the registry</span>
+                </label>
+                <small>
+                    <b>OUTPUT RULES</b> normally forbids every LoRA, LyCORIS, hypernetwork and embedding
+                    call, and that rule cannot be edited away — it is what keeps a rewritten
+                    <b>Prompter Instructions</b> from letting arbitrary syntax into the workflow. This
+                    relaxes it to <i>copied from the registry, never invented</i>, for a checkpoint that
+                    needs something like <code>&lt;lora:character_style:0.7&gt;</code> pinned to one character in
+                    every image. Put the call in that character's row in <b>Appearance Registry</b> below,
+                    by hand or by asking for it in <b>Seeding Instructions</b>; a pinned call is re-inserted
+                    if the prompter drops it, and it does not count against <b>Max tags</b>. Needs
+                    <b>Use the appearance registry</b> on. The alternative is <b>Prepend Prompt</b>, which
+                    is added after the prompter and bypasses all of this — but it is one global string, not
+                    one per character.
+                </small>
+
                 <label class="checkbox_label" for="comfyinject_prompter_appearance_autoseed" title="Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards, every bound lorebook and the chat itself to fill the registry.">
                     <input id="comfyinject_prompter_appearance_autoseed" type="checkbox" />
                     <span>Seed the registry automatically</span>
@@ -503,6 +521,14 @@
                         <span>Appearance Registry</span>
                     </div>
                 </div>
+                <small>
+                    In <b>Appearance Registry</b>, emptying a row's tags <b>suppresses</b> that name rather
+                    than clearing it: the row stays, nothing is sent for it, and re-seeding will not write it
+                    again. That is the answer for a card that is a world, a narrator or a game master rather
+                    than a person — such a card is still the only name in <b>CAST</b>, so the seeding pass
+                    will otherwise keep attributing the nearest body description to it. Deleting the row
+                    instead only lasts until the next re-seed.
+                </small>
 
             </div>
 

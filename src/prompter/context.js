@@ -514,6 +514,10 @@ export async function buildPrompterContext({ messageIndex = null, structuredMode
             maxTags: settings.prompter_max_tags,
             bannedTags: settings.prompter_banned_tags,
             includeSchema: schemaBelongsInPrompt(structuredMode),
+            // Gated on the registry too: with no registry there is nothing to copy
+            // a call from, so relaxing the clause would permit an invented one and
+            // nothing else.
+            allowRegistryLora: !!settings.prompter_allow_registry_lora && !!settings.prompter_appearance_enabled,
         }),
     });
 
