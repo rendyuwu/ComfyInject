@@ -13,9 +13,9 @@ import {
     deleteRegistryEntry,
     describeSeedingState,
     listRegistryEntries,
-    MAX_GROWN_TAGS_CHARS,
-    MAX_TAGS_CHARS,
     readRegistry,
+    registryMaxChars,
+    registryMaxCharsFor,
     resolveCharacterKey,
     saveRegistry,
     seedRegistry,
@@ -89,7 +89,7 @@ function renderSourceBadge(source) {
  * the tombstone that keeps a name out of every later request permanently. Deleting
  * the row instead only lasts until the next seeding pass rewrites it.
  *
- * @param {{key: string, name: string, tags: string, source: string, truncated: boolean}} entry
+ * @param {{key: string, name: string, tags: string, source: string, truncated: boolean, truncatedAt: number}} entry
  * @param {() => void} rerender
  * @returns {HTMLElement}
  */
@@ -115,7 +115,7 @@ function buildRow(entry, rerender) {
     const status = document.createElement("div");
     status.style.cssText = "margin-top: 3px; font-size: 11px; line-height: 1.4;";
 
-    const state = { tags: entry.tags, source: entry.source, truncated: entry.truncated };
+    const state = { tags: entry.tags, source: entry.source, truncated: entry.truncated, truncatedAt: entry.truncatedAt };
 
     const paintStatus = () => {
         if (!state.tags) {
@@ -123,8 +123,14 @@ function buildRow(entry, rerender) {
             return;
         }
         if (state.truncated) {
-            const cap = state.source === "grown" ? MAX_GROWN_TAGS_CHARS : MAX_TAGS_CHARS;
-            status.innerHTML = `<span style="color: #c8a35a;">cut at the ${cap}-character cap — the end of this entry was dropped</span>`;
+            // The cap that did the cutting, which is not today's cap once the
+            // setting has been raised — and the raise is exactly when someone
+            // reads this line.
+            const cap = state.truncatedAt || registryMaxCharsFor(state.source);
+            const room = registryMaxCharsFor(state.source) > cap
+                ? ` There is room for ${registryMaxCharsFor(state.source)} now — re-seed to get the rest back.`
+                : ` Raise <b>Registry entry size</b> and re-seed to get the rest back.`;
+            status.innerHTML = `<span style="color: #c8a35a;">cut at the ${cap}-character cap — the end of this entry was dropped.${room}</span>`;
             return;
         }
         status.innerHTML = "";
@@ -149,6 +155,7 @@ function buildRow(entry, rerender) {
         state.tags = String(stored?.tags ?? "").trim();
         state.source = "user";
         state.truncated = !!stored?.truncated;
+        state.truncatedAt = Number(stored?.truncatedAt) || 0;
         badge.innerHTML = renderSourceBadge("user");
         paintStatus();
     };
@@ -316,7 +323,7 @@ export function openAppearanceEditor() {
         intro.style.cssText = "margin-bottom: 12px; font-size: 13px; line-height: 1.6; opacity: 0.9;";
         intro.innerHTML = [
             "These tags are sent to the prompter with every request, so a character keeps the same hair, eyes and outfit across images.",
-            `Stored with this chat only — a new chat on the same character starts empty. ${entries.length} entry(ies). Automatic seeding for this chat: ${describeSeedingState()}.`,
+            `Stored with this chat only — a new chat on the same character starts empty. ${entries.length} entry(ies), up to ${registryMaxChars()} characters each. Automatic seeding for this chat: ${describeSeedingState()}.`,
             "Editing a row marks it <b>user</b>, and a user row is never overwritten by seeding or by a generated image.",
             "Emptying a row's tags — or the <b>eye</b> button — <b>suppresses</b> that name: the row stays, nothing is sent for it, and seeding will not write it again. That is what a card that is a world, a narrator or a game master rather than a person wants. The <b>bin</b> only deletes, and the next seeding pass may put the row straight back.",
         ].join("<br />");

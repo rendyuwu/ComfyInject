@@ -62,17 +62,56 @@ export const APPEARANCE_SEEDED_COUNT_KEY = "comfyinject_appearance_seeded_count"
 // Structured output name for the seeding call.
 const SEED_SCHEMA_NAME = "ComfyInjectAppearance";
 
-// A registry entry is reference data, not a prompt. These caps keep a runaway
-// reply from turning every later request into a wall of tags.
+// A registry entry is reference data, not a prompt. The cap keeps a runaway reply
+// from turning every later request into a wall of tags.
 //
-// Exported so the registry editor can name the number it is reporting against
-// rather than hardcoding a second copy of it.
-export const MAX_TAGS_CHARS = 400;
+// 800 rather than the 400 this shipped with. 400 was set before the seeding
+// instructions grew a wardrobe ladder, and a body block plus eight to fourteen
+// coloured garment tags plus footwear and accessories lands at roughly 600 — so
+// the old number was cutting the exact configuration the feature encourages.
+// Raising it is the honest fix; reporting the cut, which is what the previous
+// commit did, only makes a wrong number visible.
+//
+// The clamp is the whole cost control. A registry entry is injected into every
+// subsequent request, so this number multiplies by MAX_ENTRIES and by every
+// message in the chat. At the "all" scope the section sits in the cacheable half,
+// which is what makes the raise affordable at all; at "present" it does not.
+export const DEFAULT_REGISTRY_MAX_CHARS = 800;
+export const MIN_REGISTRY_MAX_CHARS = 100;
+export const MAX_REGISTRY_MAX_CHARS = 2000;
+
 const MAX_ENTRIES = 40;
 
 // Growth takes its tags from the prompt of the image that introduced the
 // character, so it is capped harder — it is a first guess, not a considered one.
-export const MAX_GROWN_TAGS_CHARS = 240;
+// Never above the entry cap: a user who lowers that meant it.
+const MAX_GROWN_TAGS_CHARS = 240;
+
+/**
+ * How many characters one registry entry may hold, from the live setting.
+ *
+ * Clamped rather than trusted. The floor stops a typo emptying every entry the
+ * next seeding pass writes; the ceiling is a stated limit on a number that is
+ * paid for on every request, so a runaway one cannot be typed in by accident.
+ *
+ * @returns {number}
+ */
+export function registryMaxChars() {
+    const raw = Math.floor(Number(getSettings()?.prompter_registry_max_chars) || 0);
+    if (!raw) return DEFAULT_REGISTRY_MAX_CHARS;
+    return Math.min(MAX_REGISTRY_MAX_CHARS, Math.max(MIN_REGISTRY_MAX_CHARS, raw));
+}
+
+/**
+ * The cap that applies to one write, which is the entry cap for a hand edit or a
+ * seeded entry and the harder growth cap for a distilled one.
+ * @param {string} source
+ * @returns {number}
+ */
+export function registryMaxCharsFor(source) {
+    const cap = registryMaxChars();
+    return source === "grown" ? Math.min(MAX_GROWN_TAGS_CHARS, cap) : cap;
+}
 
 // The one instruction the registry needs, kept in the section body so it is sent
 // exactly when the data is. Not a setting: it is the contract that makes the
@@ -118,10 +157,10 @@ function trim(value) {
  * limit, so the caller has to be able to say so.
  *
  * @param {any} value
- * @param {number} [maxChars] - 0 disables the cap
+ * @param {number} maxChars - 0 disables the cap
  * @returns {{tags: string, dropped: number}}
  */
-function normalizeTagsInfo(value, maxChars = MAX_TAGS_CHARS) {
+function normalizeTagsInfo(value, maxChars) {
     const seen = new Set();
     const tags = [];
 
@@ -150,11 +189,11 @@ function normalizeTagsInfo(value, maxChars = MAX_TAGS_CHARS) {
  * normalizeTagsInfo() when the caller only wants the tags, and warns on a cut so
  * a truncation is never entirely silent.
  * @param {any} value
- * @param {number} [maxChars] - 0 disables the cap
+ * @param {number} maxChars - 0 disables the cap
  * @param {string} [label] - Who the tags belong to, for the warning
  * @returns {string}
  */
-function normalizeTags(value, maxChars = MAX_TAGS_CHARS, label = "") {
+function normalizeTags(value, maxChars, label = "") {
     const result = normalizeTagsInfo(value, maxChars);
     if (result.dropped) warnTruncation(label, maxChars, result.dropped);
     return result.tags;
@@ -166,7 +205,7 @@ function normalizeTags(value, maxChars = MAX_TAGS_CHARS, label = "") {
  * @param {number} dropped
  */
 function warnTruncation(label, maxChars, dropped) {
-    warnLog(`the appearance tags for "${label || "?"}" hit the ${maxChars}-character cap — ${dropped} character(s) were dropped from the end. Shorten what the seeding pass is asked for, or edit the entry by hand.`);
+    warnLog(`the appearance tags for "${label || "?"}" hit the ${maxChars}-character cap — ${dropped} character(s) were dropped from the end. Raise "Registry entry size", shorten what the seeding pass is asked for, or edit the entry by hand.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,22 +242,27 @@ function mutableRegistry() {
  *
  * `truncated` is whether the cap cut this entry's tags when it was written, so
  * the editor can mark a row that stops mid-wardrobe as cut rather than as the
- * model's own idea of complete. Entries written before the flag existed report
- * false, which is the honest answer: nothing recorded it either way.
+ * model's own idea of complete. `truncatedAt` is the cap that did it, which is
+ * not the same as the cap in force now: raising the setting does not lengthen an
+ * entry already stored, and reporting today's number against yesterday's cut
+ * would read as though the raise had not taken. 0 means it was not cut, or was
+ * cut before the number was recorded.
  *
- * @returns {Array<{key: string, name: string, tags: string, source: string, updatedAt: number, truncated: boolean}>}
+ * @returns {Array<{key: string, name: string, tags: string, source: string, updatedAt: number, truncated: boolean, truncatedAt: number}>}
  */
 export function listRegistryEntries() {
     const entries = [];
     for (const [key, value] of Object.entries(readRegistry())) {
         if (!value || typeof value !== "object") continue;
+        const truncatedAt = Math.max(0, Math.floor(Number(value.truncatedAt) || 0));
         entries.push({
             key,
             name: trim(value.name) || key,
             tags: trim(value.tags),
             source: trim(value.source) || "seed",
             updatedAt: Number(value.updatedAt) || 0,
-            truncated: !!value.truncated,
+            truncated: !!value.truncated || truncatedAt > 0,
+            truncatedAt,
         });
     }
     return entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -285,7 +329,7 @@ export function setRegistryEntry(key, { name, tags, source }) {
         return false;
     }
 
-    const maxChars = source === "grown" ? MAX_GROWN_TAGS_CHARS : MAX_TAGS_CHARS;
+    const maxChars = registryMaxCharsFor(source);
     const clean = normalizeTagsInfo(tags, maxChars);
     if (clean.dropped) warnTruncation(trim(name) || key, maxChars, clean.dropped);
     if (!clean.tags && source !== "user") return false;
@@ -296,6 +340,9 @@ export function setRegistryEntry(key, { name, tags, source }) {
         source,
         updatedAt: Date.now(),
         truncated: clean.dropped > 0,
+        // The cap that cut it, not the cap in force whenever the row is next
+        // rendered. Those diverge the moment the setting is raised.
+        truncatedAt: clean.dropped > 0 ? maxChars : 0,
     };
     return true;
 }
@@ -553,12 +600,18 @@ export const APPEARANCE_SCHEMA = buildAppearanceSchema();
  * The example tags are a parameter, read live by the caller, so an edited setting
  * takes effect on the next seeding pass rather than on the next page reload.
  *
+ * The cap is stated from the live setting rather than from a constant. Stating a
+ * number the writer is not actually held to is worse than stating none: the pass
+ * writes to the figure it was given and the difference is silently cut off the
+ * end.
+ *
  * @param {object} [options]
  * @param {string} [options.exampleTags] - The example entry's tag string
  * @param {boolean} [options.includeSchema=true] - Restate the schema JSON in the prompt
+ * @param {number} [options.maxChars] - The per-character cap to state
  * @returns {string}
  */
-function renderSeedOutputRules({ exampleTags = "", includeSchema = true } = {}) {
+function renderSeedOutputRules({ exampleTags = "", includeSchema = true, maxChars = DEFAULT_REGISTRY_MAX_CHARS } = {}) {
     const tags = String(exampleTags || "").trim() || DEFAULT_PROMPTER_SEED_EXAMPLE_TAGS;
     const example = {
         characters: [
@@ -576,7 +629,7 @@ function renderSeedOutputRules({ exampleTags = "", includeSchema = true } = {}) 
         JSON.stringify(example, null, 2),
         "",
         "Hard rules:",
-        `- "tags" is capped at ${MAX_TAGS_CHARS} characters per character.`,
+        `- "tags" is capped at ${maxChars} characters per character.`,
         `- Return an empty "characters" array if nothing in the source describes anyone's appearance.`,
     ].join("\n");
 }
@@ -683,6 +736,7 @@ async function buildSeedContext({ structuredMode = null } = {}) {
         body: renderSeedOutputRules({
             exampleTags: substituteTrimmed(settings.prompter_seed_example_tags),
             includeSchema: schemaBelongsInPrompt(structuredMode),
+            maxChars: registryMaxChars(),
         }),
     });
 

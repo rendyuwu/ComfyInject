@@ -46,6 +46,7 @@ const PROMPTER_FIELDS = [
     ["#comfyinject_prompter_seed_refresh_messages", "prompter_seed_refresh_messages", "int"],
     ["#comfyinject_prompter_max_images_per_message", "prompter_max_images_per_message", "int"],
     ["#comfyinject_prompter_max_tags", "prompter_max_tags", "int"],
+    ["#comfyinject_prompter_registry_max_chars", "prompter_registry_max_chars", "int"],
     ["#comfyinject_prompter_auto", "prompter_auto", "checkbox"],
     ["#comfyinject_prompter_include_card", "prompter_include_card", "checkbox"],
     ["#comfyinject_prompter_include_persona", "prompter_include_persona", "checkbox"],

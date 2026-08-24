@@ -270,6 +270,21 @@ export const defaultSettings = Object.freeze({
     // string rather than per character.
     prompter_allow_registry_lora: false,
 
+    // How many characters one registry entry may hold. Clamped to 100–2000 by
+    // `registryMaxChars()`; 0 falls back to the shipped default.
+    //
+    // 800, raised from the 400 this shipped with. 400 predates the seeding pass
+    // being asked for a wardrobe ladder, and a body block plus eight to fourteen
+    // coloured garment tags plus footwear and accessories lands near 600 — so the
+    // old figure was cutting the exact reply the instructions ask for, silently.
+    //
+    // The cost is real and worth stating: an entry is injected into every
+    // subsequent request, so this multiplies by the number of entries and by every
+    // message in the chat. At Registry Scope "all" the section lives in the
+    // cacheable half of the request, which is what makes the raise cheap; at
+    // "present" it does not, and the raise is paid for in full every turn.
+    prompter_registry_max_chars: 800,
+
     // "all"     = inject every registry entry on every request
     // "present" = inject only the cast plus characters named in the target
     //             message or the history window

@@ -233,6 +233,23 @@
                     <span>Use the appearance registry</span>
                 </label>
 
+                <div class="flex-container flexGap5 alignItemsCenter" style="margin-top: 4px;">
+                    <label for="comfyinject_prompter_registry_max_chars" style="width: 150px;">Registry entry size</label>
+                    <input id="comfyinject_prompter_registry_max_chars" type="number" class="text_pole" min="100" max="2000" step="50" style="width: 90px;" />
+                </div>
+                <small>
+                    How many characters of tags one character's registry row may hold, cut at a comma if the
+                    reply runs long. <code>800</code> by default, raised from the <code>400</code> earlier
+                    versions used: a body block plus eight to fourteen coloured garment tags plus footwear and
+                    accessories lands near 600, so 400 was quietly cutting the wardrobe the seeding
+                    instructions ask for. The seeding pass is told this number, so raising it makes it write
+                    more — and every row is sent with <i>every</i> request, so this multiplies by the number
+                    of rows and by the length of the chat. At <b>Registry Scope: All</b> the rows sit in the
+                    cacheable half of the request and the raise is nearly free; at <b>Present</b> it is paid
+                    for every turn. Raising it does not lengthen a row already stored — re-seed, or edit the
+                    row by hand.
+                </small>
+
                 <label class="checkbox_label" for="comfyinject_prompter_allow_registry_lora" title="Let a LoRA call stored in an appearance registry entry through to the image prompt. Off, every LoRA and embedding call is forbidden and stripped from the prompt rules.">
                     <input id="comfyinject_prompter_allow_registry_lora" type="checkbox" />
                     <span>Allow LoRA calls pinned in the registry</span>
