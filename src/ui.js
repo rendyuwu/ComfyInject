@@ -24,6 +24,12 @@ import { escapeHtml, injectStyle } from "./prompter/overlay.js";
 import { openAppearanceEditor } from "./prompter/appearance-ui.js";
 import { getPrefillStatus, resetTransportState } from "./prompter/llm.js";
 import { addDirectButtons } from "./prompter/director.js";
+import {
+    loadPrompterSettingsFile,
+    parsePrompterFile,
+    savePrompterSettingsFile,
+    serializePrompterFile,
+} from "./prompter/settingsfile.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
 
@@ -458,6 +464,59 @@ function populatePrompterUI() {
 }
 
 /**
+ * Writes every prompter prose field (the "text" rows of PROMPTER_FIELDS) to a
+ * file the user picks. The section list is not duplicated here: the same table
+ * that binds the panel is the file's section list, in table order, so a saved
+ * file diffs cleanly against the previous save.
+ */
+async function savePrompterSettingsToFile() {
+    const settings = getSettings();
+    const sections = PROMPTER_FIELDS
+        .filter(([, , kind]) => kind === "text")
+        .map(([, key]) => ({ key, value: settings[key] ?? "" }));
+    try {
+        await savePrompterSettingsFile(serializePrompterFile(sections));
+        toastr.success("Prompter settings saved to file.", "ComfyInject");
+    } catch (err) {
+        if (err?.name === "AbortError") return; // picker dismissed
+        console.warn("[ComfyInject] Could not save prompter settings file:", err);
+        toastr.error("Could not save the file.", "ComfyInject");
+    }
+}
+
+/**
+ * Reads a prompter-settings file back into the panel. Unknown keys and
+ * non-prose keys are ignored, so the file is forward-compatible with newer
+ * section names. A present-but-empty section applies "" — a cleared field is
+ * distinct from an absent one, which is left untouched.
+ */
+async function loadPrompterSettingsFromFile() {
+    let text;
+    try {
+        text = await loadPrompterSettingsFile();
+    } catch (err) {
+        if (err?.name === "AbortError") return; // picker dismissed
+        console.warn("[ComfyInject] Could not load prompter settings file:", err);
+        toastr.error("Could not load the file.", "ComfyInject");
+        return;
+    }
+    if (text === null) return;
+
+    const settings = getSettings();
+    const parsed = parsePrompterFile(text);
+    let applied = 0;
+    for (const [key, value] of Object.entries(parsed)) {
+        const row = PROMPTER_FIELDS.find(([, k]) => k === key);
+        if (!row || row[2] !== "text") continue;
+        settings[key] = value;
+        applied++;
+    }
+    saveSettings();
+    populatePrompterUI();
+    toastr.success(`Loaded ${applied} prompter field${applied === 1 ? "" : "s"} from file.`, "ComfyInject");
+}
+
+/**
  * Populates all input fields from current settings.
  */
 function populateUI() {
@@ -635,6 +694,15 @@ function wirePrompterEvents() {
 
     $("#comfyinject_prompter_appearance_btn").on("click", function () {
         openAppearanceEditor();
+    });
+
+    // Settings file
+    $("#comfyinject_prompter_save_btn").on("click", function () {
+        savePrompterSettingsToFile();
+    });
+
+    $("#comfyinject_prompter_load_btn").on("click", function () {
+        loadPrompterSettingsFromFile();
     });
 }
 
