@@ -20,11 +20,39 @@ import {
 import { openGallery } from "./gallery.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS, fetchWithTimeout, requestTimeoutMs } from "./http.js";
 import { openContextPreview, openPrompterTest } from "./prompter/preview.js";
+import { escapeHtml, injectStyle } from "./prompter/overlay.js";
 import { openAppearanceEditor } from "./prompter/appearance-ui.js";
 import { getPrefillStatus, resetTransportState } from "./prompter/llm.js";
 import { addDirectButtons } from "./prompter/director.js";
 
 const EXTENSION_FOLDER = `scripts/extensions/third-party/ComfyInject`;
+
+// Panel-wide styles: the mobile wrap rules, the disclosure toggles' caret
+// behaviour, and the spacing/label classes that replaced the repeated inline
+// styles. Injected once; media queries cannot live in an inline style attribute.
+const SETTINGS_CSS = `
+#comfyinject_settings .comfyinject-disclosure {
+    align-items: center;
+}
+#comfyinject_settings .comfyinject-disclosure-caret {
+    transition: transform 0.15s ease;
+}
+#comfyinject_settings .comfyinject-disclosure-caret.down {
+    transform: rotate(-90deg);
+}
+#comfyinject_settings .comfyinject-row { margin-top: 4px; }
+#comfyinject_settings .comfyinject-tools-row { margin-top: 8px; }
+#comfyinject_settings .comfyinject-stack { margin-top: 8px; }
+@media (max-width:700px){
+    /* The !importants are load-bearing: several controls carry inline
+       width styles, and an inline style outranks any selector here. */
+    #comfyinject_settings .flex-container{flex-wrap:wrap}
+    #comfyinject_settings select.text_pole,
+    #comfyinject_settings textarea.text_pole{width:100% !important;min-width:0}
+    #comfyinject_settings .flex-container>label{width:auto !important;min-width:110px}
+    #comfyinject_settings input[type="number"].text_pole{flex:1 1 80px;width:auto !important}
+}
+`;
 
 // Dedicated prompter fields, bound declaratively — one table instead of a
 // second wall of near-identical handlers.
@@ -123,6 +151,30 @@ function saveSettings() {
 }
 
 /**
+ * Parses a numeric input value, falling back when it is empty or unparseable
+ * rather than storing NaN — which JSON.stringify turns into null and ComfyUI
+ * rejects with an opaque 400. Every numeric field uses this; the fallback is
+ * always the same default defaultSettings ships for that key.
+ * @param {*} value
+ * @param {number} fallback
+ * @returns {number}
+ */
+function intOr(value, fallback) {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+/** Same contract as intOr for float fields (CFG, denoise).
+ * @param {*} value
+ * @param {number} fallback
+ * @returns {number}
+ */
+function floatOr(value, fallback) {
+    const n = parseFloat(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+/**
  * Fetches the list of available checkpoints from ComfyUI.
  * @returns {Promise<string[]>} Array of checkpoint filenames, or empty array on failure
  */
@@ -178,8 +230,9 @@ async function refreshCheckpointList(showToast = true) {
     if (checkpoints.length > 0) {
         const current = getSettings().checkpoint;
         for (const name of checkpoints) {
+            const safeName = escapeHtml(name);
             dropdown.append(
-                `<div class="comfyinject-checkpoint-option" data-value="${name}" style="padding: 6px 10px; cursor: pointer; ${name === current ? "font-weight: bold;" : ""}">${name}</div>`
+                `<div class="comfyinject-checkpoint-option" data-value="${safeName}" style="padding: 6px 10px; cursor: pointer; ${name === current ? "font-weight: bold;" : ""}">${safeName}</div>`
             );
         }
         if (showToast) {
@@ -288,9 +341,22 @@ function populatePrompterProfiles() {
     select.append(`<option value="">-- Use the active main API --</option>`);
     for (const profile of supported) {
         const label = profile.name || profile.id;
-        select.append(`<option value="${profile.id}">${label}</option>`);
+        select.append(`<option value="${escapeHtml(profile.id)}">${escapeHtml(label)}</option>`);
     }
     select.val(settings.prompter_profile_id || "");
+
+    // This change handler belongs to the manual fallback list only — when
+    // handleDropdown is available it owns the element's behaviour instead.
+    // Namespaced + off first so re-population cannot stack handlers.
+    select.off("change.comfyinjectProfile").on("change.comfyinjectProfile", function () {
+        const value = $(this).val();
+        if (getSettings().prompter_profile_id === value) return;
+        getSettings().prompter_profile_id = value;
+        resetTransportState();
+        // Selecting a profile is what makes a prefill inert.
+        updatePrefillNote();
+        saveSettings();
+    });
 }
 
 /**
@@ -312,7 +378,8 @@ function populatePrompterPresets() {
     select.empty();
     select.append(`<option value="">-- Use the profile's own preset --</option>`);
     for (const preset of presets) {
-        select.append(`<option value="${preset}">${preset}</option>`);
+        const safePreset = escapeHtml(preset);
+        select.append(`<option value="${safePreset}">${safePreset}</option>`);
     }
     select.val(presets.includes(current) ? current : "");
 }
@@ -375,8 +442,14 @@ function populatePrompterUI() {
     const settings = getSettings();
 
     for (const [selector, key, kind] of PROMPTER_FIELDS) {
-        if (kind === "checkbox") $(selector).prop("checked", !!settings[key]);
-        else $(selector).val(settings[key] ?? "");
+        const $el = $(selector);
+        if (!$el.length) {
+            // A selector typo would otherwise fail silently as a jQuery no-op.
+            console.warn(`[ComfyInject] PROMPTER_FIELDS selector matched nothing: ${selector}`);
+            continue;
+        }
+        if (kind === "checkbox") $el.prop("checked", !!settings[key]);
+        else $el.val(settings[key] ?? "");
     }
 
     populatePrompterProfiles();
@@ -422,13 +495,14 @@ function populateUI() {
     const resContainer = $("#comfyinject_resolutions");
     resContainer.empty();
     for (const [token, res] of Object.entries(settings.resolutions)) {
+        const safeToken = escapeHtml(token);
         resContainer.append(`
             <div class="flex-container flexGap5 alignItemsCenter" style="margin-bottom: 4px;">
-                <label style="width: 80px;">${token}</label>
+                <label style="width: 80px;">${safeToken}</label>
                 <input
                     type="number"
                     class="text_pole comfyinject-res-width"
-                    data-token="${token}"
+                    data-token="${safeToken}"
                     value="${res.width}"
                     min="64"
                     max="2048"
@@ -439,7 +513,7 @@ function populateUI() {
                 <input
                     type="number"
                     class="text_pole comfyinject-res-height"
-                    data-token="${token}"
+                    data-token="${safeToken}"
                     value="${res.height}"
                     min="64"
                     max="2048"
@@ -455,7 +529,8 @@ function populateUI() {
     const shotSelect = $("#comfyinject_shot_lock_value");
     shotSelect.empty();
     for (const token of Object.keys(settings.shot_tags)) {
-        shotSelect.append(`<option value="${token}" ${token === settings.shot_lock ? "selected" : ""}>${token}</option>`);
+        const safeToken = escapeHtml(token);
+        shotSelect.append(`<option value="${safeToken}" ${token === settings.shot_lock ? "selected" : ""}>${safeToken}</option>`);
     }
     updateShotLockUI(settings.shot_lock_enabled);
 
@@ -475,14 +550,15 @@ function populateUI() {
     const shotContainer = $("#comfyinject_shot_tags");
     shotContainer.empty();
     for (const [token, tags] of Object.entries(settings.shot_tags)) {
+        const safeToken = escapeHtml(token);
         shotContainer.append(`
             <div class="flex-container flexGap5 alignItemsCenter" style="margin-bottom: 4px;">
-                <label style="width: 80px;">${token}</label>
+                <label style="width: 80px;">${safeToken}</label>
                 <input
                     type="text"
                     class="text_pole comfyinject-shot-tag"
-                    data-token="${token}"
-                    value="${tags}"
+                    data-token="${safeToken}"
+                    value="${escapeHtml(tags)}"
                 />
             </div>
         `);
@@ -496,6 +572,7 @@ function wirePrompterEvents() {
     // Block toggle
     $("#comfyinject_prompter_toggle").on("click", function () {
         $("#comfyinject_prompter_block").toggle();
+        $(this).find(".comfyinject-disclosure-caret").toggleClass("down");
     });
 
     // Declarative fields
@@ -504,7 +581,7 @@ function wirePrompterEvents() {
         $(selector).on(event, function () {
             const settings = getSettings();
             if (kind === "checkbox") settings[key] = $(this).prop("checked");
-            else if (kind === "int") settings[key] = parseInt($(this).val(), 10);
+            else if (kind === "int") settings[key] = intOr($(this).val(), defaultSettings[key]);
             else settings[key] = $(this).val();
 
             // A changed structured-output setting should retry a backend that
@@ -529,18 +606,6 @@ function wirePrompterEvents() {
             saveSettings();
         });
     }
-
-    // Connection profile — only bound for the manual fallback list.
-    // handleDropdown owns its own change handler when it is available.
-    $("#comfyinject_prompter_profile_id").on("change", function () {
-        const value = $(this).val();
-        if (getSettings().prompter_profile_id === value) return;
-        getSettings().prompter_profile_id = value;
-        resetTransportState();
-        // Selecting a profile is what makes a prefill inert.
-        updatePrefillNote();
-        saveSettings();
-    });
 
     // Preset override
     $("#comfyinject_prompter_preset").on("change", function () {
@@ -660,13 +725,13 @@ function wireEvents() {
 
     // Steps
     $("#comfyinject_steps").on("input", function () {
-        getSettings().steps = parseInt($(this).val(), 10);
+        getSettings().steps = intOr($(this).val(), defaultSettings.steps);
         saveSettings();
     });
 
     // CFG
     $("#comfyinject_cfg").on("input", function () {
-        getSettings().cfg = parseFloat($(this).val());
+        getSettings().cfg = floatOr($(this).val(), defaultSettings.cfg);
         saveSettings();
     });
 
@@ -684,23 +749,21 @@ function wireEvents() {
 
     // Denoise
     $("#comfyinject_denoise").on("input", function () {
-        getSettings().denoise = parseFloat($(this).val());
+        getSettings().denoise = floatOr($(this).val(), defaultSettings.denoise);
         saveSettings();
     });
 
     // Max poll attempts
     $("#comfyinject_max_poll_attempts").on("input", function () {
-        getSettings().max_poll_attempts = parseInt($(this).val(), 10);
+        getSettings().max_poll_attempts = intOr($(this).val(), defaultSettings.max_poll_attempts);
         saveSettings();
     });
 
-    // Request timeout — an unparseable or empty field falls back to the default
-    // rather than storing NaN, which would disable every deadline at once.
+    // Request timeout — an unparseable, empty or non-positive field falls back to
+    // the default rather than storing NaN, which would disable every deadline at once.
     $("#comfyinject_request_timeout_ms").on("input", function () {
-        const value = parseInt($(this).val(), 10);
-        getSettings().request_timeout_ms = Number.isFinite(value) && value > 0
-            ? value
-            : DEFAULT_REQUEST_TIMEOUT_MS;
+        const value = intOr($(this).val(), 0);
+        getSettings().request_timeout_ms = value > 0 ? value : DEFAULT_REQUEST_TIMEOUT_MS;
         saveSettings();
     });
 
@@ -728,13 +791,13 @@ function wireEvents() {
 
     // Local image saving — max dimension
     $("#comfyinject_downscale_max_dimension").on("input", function () {
-        getSettings().downscale_max_dimension = parseInt($(this).val(), 10);
+        getSettings().downscale_max_dimension = intOr($(this).val(), defaultSettings.downscale_max_dimension);
         saveSettings();
     });
 
     // Local image saving — WebP quality
     $("#comfyinject_webp_quality").on("input", function () {
-        getSettings().webp_quality = parseInt($(this).val(), 10);
+        getSettings().webp_quality = intOr($(this).val(), defaultSettings.webp_quality);
         saveSettings();
     });
 
@@ -748,27 +811,29 @@ function wireEvents() {
 
     // Resolution lock — width
     $("#comfyinject_resolution_lock_width").on("input", function () {
-        getSettings().resolution_lock.width = parseInt($(this).val(), 10);
+        getSettings().resolution_lock.width = intOr($(this).val(), defaultSettings.resolution_lock.width);
         saveSettings();
     });
 
     // Resolution lock — height
     $("#comfyinject_resolution_lock_height").on("input", function () {
-        getSettings().resolution_lock.height = parseInt($(this).val(), 10);
+        getSettings().resolution_lock.height = intOr($(this).val(), defaultSettings.resolution_lock.height);
         saveSettings();
     });
 
     // Resolutions — width
     $("#comfyinject_resolutions").on("input", ".comfyinject-res-width", function () {
         const token = $(this).data("token");
-        getSettings().resolutions[token].width = parseInt($(this).val(), 10);
+        const current = getSettings().resolutions[token].width;
+        getSettings().resolutions[token].width = intOr($(this).val(), current);
         saveSettings();
     });
 
     // Resolutions — height
     $("#comfyinject_resolutions").on("input", ".comfyinject-res-height", function () {
         const token = $(this).data("token");
-        getSettings().resolutions[token].height = parseInt($(this).val(), 10);
+        const current = getSettings().resolutions[token].height;
+        getSettings().resolutions[token].height = intOr($(this).val(), current);
         saveSettings();
     });
 
@@ -801,6 +866,7 @@ function wireEvents() {
     // Advanced settings toggle
     $("#comfyinject_advanced_toggle").on("click", function () {
         $("#comfyinject_advanced_block").toggle();
+        $(this).find(".comfyinject-disclosure-caret").toggleClass("down");
     });
 
     // Resolutions toggle
@@ -837,7 +903,7 @@ function wireEvents() {
 
     // Seed lock — custom value
     $("#comfyinject_seed_lock_value").on("input", function () {
-        getSettings().seed_lock_value = parseInt($(this).val(), 10);
+        getSettings().seed_lock_value = intOr($(this).val(), defaultSettings.seed_lock_value);
         saveSettings();
     });
 
@@ -902,14 +968,44 @@ function wireEvents() {
 }
 
 /**
+ * Adds a "ComfyInject Registry" entry to SillyTavern's global extensions menu
+ * (the magic wand in the top bar). That menu is browser chrome, not chat
+ * content, so the sanitizer constraint on per-message buttons does not apply.
+ * Null-probes the menu and degrades silently — an implicit core contract.
+ * Idempotent via the id check, so re-init cannot double-inject.
+ */
+function addWandMenuItem() {
+    const menu = document.getElementById("extensionsMenu");
+    if (!menu || document.getElementById("comfyinject_wand_registry")) return;
+    const item = document.createElement("div");
+    item.id = "comfyinject_wand_registry";
+    item.className = "list-group-item flex-container flexGap5";
+    item.innerHTML = '<div class="fa-fw fa-solid fa-user-pen"></div><span>ComfyInject Registry</span>';
+    item.addEventListener("click", () => {
+        // ST does not close its own dropdown on an outside click to the item;
+        // official extensions close it themselves.
+        const dropdown = item.closest(".dropdown-menu")?.parentElement;
+        if (dropdown) {
+            dropdown.classList.remove("open");
+            const toggle = dropdown.querySelector("[data-toggle='dropdown']");
+            if (toggle?.setAttribute) toggle.setAttribute("aria-expanded", "false");
+        }
+        openAppearanceEditor();
+    });
+    menu.appendChild(item);
+}
+
+/**
  * Loads the settings HTML and initializes the UI.
  * Called once from index.js on load.
  */
 export async function initUI() {
+    injectStyle("comfyinject-settings-styles", SETTINGS_CSS);
     const settingsHtml = await $.get(`/${EXTENSION_FOLDER}/settings.html`);
     $("#extensions_settings").append(settingsHtml);
     populateUI();
     wireEvents();
+    addWandMenuItem();
 
     // Silently try to populate the checkpoint list on load — no toast if ComfyUI isn't running
     refreshCheckpointList(false);
