@@ -184,6 +184,31 @@ export const defaultSettings = Object.freeze({
     // is dedicated mode catching up rather than new ground.
     prompter_previous_image_count: 0,
 
+    // Roll a focus region and a manner from the two pools below and state them to
+    // the prompter as the FRAME DIRECTION section, one roll per image slot the
+    // request allows.
+    //
+    // The prompter takes its framing from the scene, so a scene that does not move
+    // gets the same framing turn after turn — and PREVIOUS IMAGES pushes the same
+    // way, since it is the model's own last answer quoted back. This is the
+    // counterweight: a directive the model is handed rather than a preference it
+    // has to infer, so successive frames differ by construction.
+    //
+    // The roll is a hash of the target message's send_date, never random. The
+    // context is rebuilt mid-flight when a backend refuses schema mode, and
+    // Preview Context promises byte-identical output to the real request; a fresh
+    // draw per build would break both. A value the previous turn gave the same slot
+    // is skipped where the pool has room, and the roll is recorded only once an
+    // image has actually landed.
+    //
+    // Both pools ship empty and the feature is inert until at least one is filled.
+    // The vocabulary that suits a checkpoint is the user's to write, and a shipped
+    // list would be a shipped opinion about framing applied to every install. The
+    // cost is a handful of characters in the volatile block per request.
+    prompter_frame_rotation_enabled: false,
+    prompter_frame_focus_pool: "",
+    prompter_frame_manner_pool: "",
+
     prompter_include_card: true,
     prompter_include_persona: true,
     prompter_include_author_note: false,

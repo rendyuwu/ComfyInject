@@ -11,6 +11,7 @@ import { parseImageTags } from "../imgtag.js";
 import { substituteTrimmed } from "../macros.js";
 import { getImageData } from "../state.js";
 import { appearanceSectionIsVolatile, buildAppearanceSection } from "./appearance.js";
+import { buildFrameDirectionSection } from "./framing.js";
 import { debugLog } from "./log.js";
 import { schemaBelongsInPrompt } from "./llm.js";
 import { renderOutputRules } from "./schema.js";
@@ -538,6 +539,18 @@ export async function buildPrompterContext({ messageIndex = null, structuredMode
         title: "TARGET MESSAGE (illustrate this one)",
         body: `${targetName}: ${targetText}`,
     });
+
+    // Beside the ask, not among the reference material: this is an instruction
+    // about the frames being requested right now, and it is worth nothing to the
+    // model until it knows what it is illustrating. It stays behind FINAL
+    // INSTRUCTIONS all the same — that section is the only text the user fully
+    // owns and the only one in the last position, and nothing this extension
+    // generates may take that slot from it.
+    volatileSections.push(...buildFrameDirectionSection(
+        settings,
+        targetMessage,
+        settings.prompter_max_images_per_message
+    ));
 
     // Last, deliberately. This is the only section the user fully owns, and the
     // position is the point: a rule stated here is the last thing the model reads

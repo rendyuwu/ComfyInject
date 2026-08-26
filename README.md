@@ -195,6 +195,9 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `History messages` | How many messages before the target message the prompter sees. Default: 6. This is the largest changing part of every request, so it is the biggest single lever on cost. |
 | `Anchor stride` | Hold the history window's start still for this many messages at a time instead of sliding it by one every turn, so the rendered history is append-only between jumps. `0` (default) slides. Only useful on a backend that caches prompt prefixes — see [Prompt caching](#prompt-caching). A stride close to `History messages` makes the window's length vary a lot; half of it or less is a reasonable choice. |
 | `Previous images` | Quote this many previously generated image prompts back to the prompter as the **PREVIOUS IMAGES** section, so clothing state carries across images. `0` (default) is off, `1` is the useful value, `3` is the cap. Off by default because it can make a model repeat itself — see [Wardrobe and scene continuity](#wardrobe-and-scene-continuity). |
+| `Rotate frame direction` | Draw one framing focus and one manner per image slot from the two pools below and state them as the **FRAME DIRECTION** section, so successive images of a scene that has not moved are framed differently by construction. Default: off, and inert until at least one pool is filled. See [Frame direction rotation](#frame-direction-rotation). |
+| `Frame focus pool` | Comma-separated framing focus values to rotate through, e.g. `face, hands, silhouette`. Newlines separate too. Empty by default. |
+| `Frame manner pool` | Comma-separated manner values paired with the focus, e.g. `candid, deliberate, off-centre`. Empty by default. Either pool may be left empty; the lines then carry only the other field. |
 | `Include character card` / `user persona` / `author's note` / `running summary` | Which context sections to send. Card, persona and summary default to on; author's note defaults to off. |
 | `World Info` | `Activated entries only` (default) or `Off`. Entries are read in dry-run mode, so the main chat's sticky, cooldown and recursion state is never touched. |
 | `Max chars` | Character cap on the World Info section. Default: 4000. |
@@ -209,7 +212,7 @@ Its own collapsible panel, above Advanced Settings. See [Dedicated Prompter](#de
 | `Seeding Final Instructions` | The seeding pass's own **last** section, empty by default and left out entirely when empty. Deliberately separate from **Final Instructions**: see [Tuning the prompter](#tuning-the-prompter). |
 | `Seeding User Turn` | The user message that asks the seeding pass for its reply. Emptying it falls back to the shipped default rather than to **User Turn**, which asks for something else entirely. |
 
-Every prompt field whose shipped default is not empty has a **Restore default** button that restores only that field. The fields that default to empty — **Constraints**, **Banned tags**, **Final Instructions**, **Seeding Final Instructions**, **Assistant Prefill** — have none, because a button that clears a field you just filled is a footgun dressed as a convenience. Your edits are never overwritten on update, and they all survive **Reset Advanced Settings**.
+Every prompt field whose shipped default is not empty has a **Restore default** button that restores only that field. The fields that default to empty — **Constraints**, **Banned tags**, **Frame focus pool**, **Frame manner pool**, **Final Instructions**, **Seeding Final Instructions**, **Assistant Prefill** — have none, because a button that clears a field you just filled is a footgun dressed as a convenience. Your edits are never overwritten on update, and they all survive **Reset Advanced Settings**.
 
 ### Prompt Control
 
@@ -462,8 +465,9 @@ Two messages. The split is on the static/volatile line, which is a cost decision
 11. **RECENT HISTORY** — the last N messages, with the scope stated in the section header so the model knows what it is missing.
 12. **PREVIOUS IMAGES** — what the last few pictures actually showed. Off by default; see [Wardrobe and scene continuity](#wardrobe-and-scene-continuity).
 13. **TARGET MESSAGE** — the message being illustrated.
-14. **FINAL INSTRUCTIONS** — your **Final Instructions**. Omitted entirely when empty.
-15. **User Turn** — the ask, appended plainly at the end.
+14. **FRAME DIRECTION** — one rolled focus and manner per image slot. Off by default and omitted entirely when off or when both pools are empty; see [Frame direction rotation](#frame-direction-rotation).
+15. **FINAL INSTRUCTIONS** — your **Final Instructions**. Omitted entirely when empty.
+16. **User Turn** — the ask, appended plainly at the end.
 
 The ordering rule is unchanged: reference data first, standing orders last, and **Final Instructions** is still the last thing the model reads before the ask. **PREVIOUS IMAGES** is the one section placed deliberately *away* from the strongest position — see the subsection for why.
 
@@ -607,6 +611,29 @@ The setting alone makes the feature available; that line is what makes it work a
 **It defaults to `0`, and that is a real trade rather than a shipped bug.** Showing a model its last answer is the standard way to get the same answer again. The section is worded *"not a template to copy"*, it names the shot so the model has something to vary against, and it sits before the target message rather than after it — last is the strongest position, and here that would make copying *more* likely, not less. None of those is a guarantee. If three consecutive images stop varying their framing, drop to `1`, and if that is not enough go back to `0`.
 
 Two smaller notes. The quoted prompts are filtered through **Banned tags** on the way in, because in `Both` mode a quoted prompt may have been written by the roleplay model and never validated at all — and a banned tag in text the prompter *reads* becomes one in text the prompter *writes*. And the shot label is omitted rather than guessed when it cannot be verified against the image it belongs to, since a wrong shot label is worse than none when the whole point is to vary away from it.
+
+#### Frame direction rotation
+
+The other half of the same problem. **PREVIOUS IMAGES** tells the prompter what the last frame showed and asks it to vary; **Rotate frame direction** stops asking and states the variation instead.
+
+With it on, one **focus** and one **manner** are drawn from two pools you write and stated as the **FRAME DIRECTION** section, one line per image slot **Max images per message** allows:
+
+```
+--- FRAME DIRECTION ---
+One line per image slot this request allows; "image 1" is the first entry in
+"images". That slot's frame emphasises the named region and carries the named
+manner; how it gets there is yours to choose. An absent field is unconstrained.
+image 1 — focus: hands; manner: candid
+--- END FRAME DIRECTION ---
+```
+
+Both pools ship empty and the feature does nothing until at least one is filled. The vocabulary that suits a checkpoint is yours to write, and a shipped list would be a shipped opinion about framing applied to every install. Fill one pool and leave the other blank and the lines carry one field; the section says so, so silence reads as "unconstrained" rather than as something the model should fill in.
+
+**The draw is not random.** It is a hash of the target message's own timestamp, which matters for two reasons: the request is rebuilt mid-flight when a backend refuses schema-constrained output, and **Preview Context** promises byte-identical output to what will actually be sent. A fresh draw per build would quietly break both. Everything else follows from that — the same message always asks for the same frame, and re-rolling a message means asking a different message.
+
+A value the previous turn gave the *same slot* is skipped where the pool has room, so two consecutive images do not open on the same instruction. That is what the rotation is; a pool of one value rotates nothing. The previous draw is remembered per chat and is spent only once an image has actually landed, so a ComfyUI failure or a chat you switched away from does not burn a value nothing was drawn from.
+
+It composes with **Previous images** rather than replacing it: that section owns what the scene was left in, this one owns where the next frame looks.
 
 #### The seeding pass is a separate call
 

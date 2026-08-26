@@ -345,6 +345,35 @@
                     itself — if framing stops varying, drop to <code>0</code>.
                 </small>
 
+                <label class="checkbox_label comfyinject-row" for="comfyinject_prompter_frame_rotation_enabled" title="Roll one focus region and one manner per image slot from the pools below and state them to the prompter, so successive images of a scene that has not moved are framed differently.">
+                    <input id="comfyinject_prompter_frame_rotation_enabled" type="checkbox" />
+                    <span>Rotate frame direction</span>
+                </label>
+                <small>
+                    Adds a <b>FRAME DIRECTION</b> line per image slot. Needs at least one pool below; with
+                    both empty it does nothing. The roll comes from the target message rather than from
+                    chance, so <b>Preview Context</b> shows exactly what will be sent.
+                </small>
+
+                <div class="comfyinject-row">
+                    <label for="comfyinject_prompter_frame_focus_pool">Frame focus pool</label>
+                    <textarea id="comfyinject_prompter_frame_focus_pool" class="text_pole" rows="2"></textarea>
+                    <small>
+                        Comma-separated framing focus values to rotate through, e.g.
+                        <code>face, hands, silhouette</code>. Newlines separate too.
+                    </small>
+                </div>
+
+                <div class="comfyinject-row">
+                    <label for="comfyinject_prompter_frame_manner_pool">Frame manner pool</label>
+                    <textarea id="comfyinject_prompter_frame_manner_pool" class="text_pole" rows="2"></textarea>
+                    <small>
+                        Comma-separated manner values paired with the focus, e.g.
+                        <code>candid, deliberate, off-centre</code>. A value the previous turn gave the same
+                        slot is skipped where the pool has room, so a pool of one rotates nothing.
+                    </small>
+                </div>
+
                 <label class="checkbox_label" for="comfyinject_prompter_include_card">
                     <input id="comfyinject_prompter_include_card" type="checkbox" />
                     <span>Include character card</span>

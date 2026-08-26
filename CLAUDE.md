@@ -71,7 +71,7 @@ These exist because each was violated once and broke something:
 
 ### Chat state invariants
 
-- **Image metadata is keyed by `send_date`**, not array index, and lives in `chatMetadata[MODULE_NAME]`. Numeric-index lookup is a legacy fallback only.
+- **Image metadata is keyed by `send_date`**, not array index, and lives in `chatMetadata[MODULE_NAME]`. Numeric-index lookup is a legacy fallback only. That store holds nothing but per-message image entries: per-chat state belonging to a *feature* takes its own prefixed top-level chat-metadata key instead, as `appearance.js` (`comfyinject_appearance`) and `framing.js` (`comfyinject_frame_directions`) both do. A named sibling inside the image store would happen to work today — every reader looks up one `send_date` or one legacy index rather than enumerating — but it buys one shared namespace with a standing rule that all future code must skip a foreign key.
 - **Metadata entry order must match `<img>` tag order in the message.** `retryImage()` and the gallery map a button to its metadata positionally. `persistMessageImages()` supports replace / append / `insertAt` for exactly this reason.
 - **Re-resolve the message index after every `await`.** Messages shift while ComfyUI works; use `dom.js:findIndexBySendDate()` and bail if the message is gone.
 - **`cleanup.js`'s `saved_images` registry is deliberately absent from `defaultSettings`**, so the settings Reset button does not orphan every image the extension ever saved.
@@ -90,6 +90,7 @@ These exist because each was violated once and broke something:
 | `schema.js` | The output contract — used as backend schema, as prompt text, and as validator |
 | `appearance.js` | Per-chat appearance registry (`seed` / `grown` / `user` entries) in chat metadata |
 | `tags.js` | Tag fingerprinting and banned-tag stripping, shared by both validators |
+| `framing.js` | Per-slot frame direction rotation: two user pools, a deterministic roll keyed on the target's `send_date`, and the last roll in chat metadata |
 | `preview.js`, `appearance-ui.js`, `overlay.js` | The three settings-panel tools and their shared overlay |
 
 Two structural decisions to preserve:

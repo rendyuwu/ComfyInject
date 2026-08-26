@@ -35,6 +35,7 @@ import { buildImgTag } from "../imgtag.js";
 import { notifyFailure, notifyWarning } from "../notify.js";
 import { ensureRegistrySeeded, growRegistry, listRegistryLoraCalls, resetAppearanceState } from "./appearance.js";
 import { buildPrompterContext } from "./context.js";
+import { frameDirectionsFor, recordFrameDirections } from "./framing.js";
 import { getErrorChain, isTimeoutError, runPrompter } from "./llm.js";
 import { parseDirective, validateDirective } from "./schema.js";
 import { debugEnabled, debugLog, warnLog } from "./log.js";
@@ -224,7 +225,13 @@ async function runDirector(messageIndex, { manual }) {
         // us a newly discovered character.
         growRegistry(validated.images);
 
-        await generateAndAppend({
+        // Re-derived rather than carried out of the builder. The roll is a pure
+        // function of the target's send_date, the pools and the stored previous
+        // roll, and nothing between the context build and here writes any of the
+        // three — so this is the same roll the request was sent with.
+        const frameDirections = frameDirectionsFor(settings, message, settings.prompter_max_images_per_message);
+
+        const produced = await generateAndAppend({
             sendDate,
             fallbackIndex: messageIndex,
             images: validated.images,
@@ -232,6 +239,11 @@ async function runDirector(messageIndex, { manual }) {
             signal,
             manual,
         });
+
+        // Only a run that put a frame on screen advances the rotation. Recording a
+        // roll that ComfyUI refused, or one whose chat has since been switched
+        // away from, would make the next turn avoid values nothing was drawn from.
+        if (produced && !signal.aborted) recordFrameDirections(frameDirections);
     } finally {
         inFlight = false;
         controller = null;
@@ -252,17 +264,20 @@ async function runDirector(messageIndex, { manual }) {
  * @param {string} params.reason
  * @param {AbortSignal} params.signal
  * @param {boolean} params.manual
+ * @returns {Promise<number>} How many images actually landed in the message
  */
 async function generateAndAppend({ sendDate, fallbackIndex, images, reason, signal, manual }) {
+    let appended = 0;
+
     for (let i = 0; i < images.length; i++) {
-        if (signal.aborted) return;
+        if (signal.aborted) return appended;
 
         let index = findIndexBySendDate(sendDate);
         if (index === -1) index = fallbackIndex;
         let message = ctx().chat?.[index];
         if (!message || message.send_date !== sendDate) {
             debugLog("target message is gone, stopping");
-            return;
+            return appended;
         }
 
         const image = images[i];
@@ -311,19 +326,19 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
                     : "Image generation failed. Press Retry on the message to try again.",
                 manual
             );
-            return;
+            return appended;
         }
 
         if (signal.aborted) {
             debugLog("aborted after generation, discarding the image");
-            return;
+            return appended;
         }
 
         // Re-resolve after the await: messages may have been deleted or moved.
         index = findIndexBySendDate(sendDate);
         if (index === -1) {
             debugLog("target message vanished while generating, discarding the image");
-            return;
+            return appended;
         }
         message = ctx().chat[index];
 
@@ -345,8 +360,11 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
             characters: image.characters,
         }], { appendMetadata: true });
 
+        appended++;
         console.log(`[ComfyInject] Prompter image appended to message ${index}`);
     }
+
+    return appended;
 }
 
 /**
