@@ -47,7 +47,7 @@ import {
 import { substituteTrimmed } from "../macros.js";
 import { debugLog, warnLog } from "./log.js";
 import { runPrompter, schemaBelongsInPrompt } from "./llm.js";
-import { extractLoraCalls, parseDirective } from "./schema.js";
+import { extractLoraCalls, loraAnchorTag, parseDirective } from "./schema.js";
 import { ensureCardsLoaded, listCastMembers, readBoundLore, renderSections, stripImages } from "./sources.js";
 import { parseTagList, stripBannedTags, tagFingerprint } from "./tags.js";
 
@@ -269,14 +269,22 @@ export function listRegistryEntries() {
 }
 
 /**
- * The LoRA-style calls the registry has pinned, per character.
+ * The LoRA-style calls the registry has pinned, per character, each with the tag
+ * it renders.
  *
  * Empty unless both the registry and `prompter_allow_registry_lora` are on, so
  * the default install never carries a call past the validator. What this feeds is
  * validateDirective's re-insertion: a call the user pinned to a character reaches
  * every image that character is in whether or not the model copied it.
  *
- * @returns {Array<{name: string, loras: string[]}>}
+ * The `anchor` is what keeps that guarantee from overreaching. A call named after
+ * a tag the same entry carries — `<lora:pubic_hair:1.0>` beside `pubic hair` — is
+ * a call for that anatomy, and a frame the tag is out of must not carry it: the
+ * renderer would paint the anatomy through her clothes. An anchor of "" means the
+ * call named nothing in the entry, which is the character-LoRA case, and those
+ * are restored unconditionally.
+ *
+ * @returns {Array<{name: string, loras: Array<{call: string, anchor: string}>}>}
  */
 export function listRegistryLoraCalls() {
     const settings = getSettings();
@@ -284,8 +292,12 @@ export function listRegistryLoraCalls() {
 
     const out = [];
     for (const entry of listRegistryEntries()) {
-        const loras = extractLoraCalls(entry.tags);
-        if (loras.length) out.push({ name: entry.name, loras });
+        const calls = extractLoraCalls(entry.tags);
+        if (!calls.length) continue;
+
+        const candidates = entry.tags.split(",");
+        const loras = calls.map(call => ({ call, anchor: loraAnchorTag(call, candidates) }));
+        out.push({ name: entry.name, loras });
     }
     return out;
 }

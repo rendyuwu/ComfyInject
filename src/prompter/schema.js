@@ -10,7 +10,7 @@
 
 import { VALID_AR, VALID_SHOT, DEFAULT_AR, DEFAULT_SHOT } from "../parse.js";
 import { DEFAULT_PROMPTER_EXAMPLE_PROMPT } from "../../settings.js";
-import { parseTagList, stripBannedTags } from "./tags.js";
+import { parseTagList, stripBannedTags, tagFingerprint } from "./tags.js";
 
 // Schema name sent to the backend. Some providers surface it in errors.
 export const SCHEMA_NAME = "ComfyInjectDirective";
@@ -38,6 +38,40 @@ const LORA_CALL_REGEX = /<(?:lora|lyco|lycoris|hypernet|embedding):[^<>]+>/gi;
  */
 export function extractLoraCalls(text) {
     return String(text ?? "").match(LORA_CALL_REGEX) || [];
+}
+
+/**
+ * The registry tag a LoRA call renders, or "" when it renders no single tag.
+ *
+ * A call names what it draws: `<lora:pubic_hair:1.0>` is the pubic hair one. When
+ * the entry that pinned it also carries that tag, the call belongs to the tag
+ * rather than to the character, and a frame the tag is out of is a frame the call
+ * is out of too — which is what lets validateDirective decline to re-insert it.
+ * A character LoRA (`<lora:aiko_v2:0.8>`) matches no tag in the entry, comes back
+ * "", and keeps the unconditional guarantee it needs.
+ *
+ * Matched on whole words in the call's own name, longest tag winning, so `ass`
+ * cannot anchor itself to `classic_dress` and `hair` cannot outrank `pubic hair`.
+ *
+ * @param {string} call - One LoRA-style call, as extractLoraCalls returns it
+ * @param {Iterable<string>} candidateTags - The tags of the entry that pinned it
+ * @returns {string} The anchor tag's fingerprint, or "" if it has none
+ */
+export function loraAnchorTag(call, candidateTags) {
+    const name = String(call ?? "").match(/^<[^:<>]+:([^:<>]+)/)?.[1] ?? "";
+    const fingerprint = tagFingerprint(name);
+    if (!fingerprint) return "";
+
+    const haystack = ` ${fingerprint} `;
+    let best = "";
+    for (const tag of candidateTags) {
+        // Skips the call itself, which arrives in this list as one of the tags.
+        if (String(tag ?? "").includes("<")) continue;
+        const candidate = tagFingerprint(tag);
+        if (!candidate || candidate.length <= best.length) continue;
+        if (haystack.includes(` ${candidate} `)) best = candidate;
+    }
+    return best;
 }
 
 /**
@@ -286,6 +320,38 @@ function capTags(prompt, maxTags) {
 }
 
 /**
+ * A prompt with one LoRA call put in beside the tag it renders.
+ *
+ * An anchorless call goes last, which is where an unconditional guarantee has to
+ * go — there is no tag for it to sit beside. An anchored one goes immediately
+ * after its anchor, so it lands in the anatomy block PROMPT SHAPE puts it in
+ * rather than trailing the setting tags at the weight of a footnote.
+ *
+ * @param {string} prompt
+ * @param {string} call
+ * @param {string} anchor - Fingerprint of the tag this call renders, or ""
+ * @returns {string|null} null when the anchor tag is not in this prompt
+ */
+function withLoraCall(prompt, call, anchor) {
+    const tags = String(prompt).split(",").map(tag => tag.trim()).filter(Boolean);
+    if (!anchor) return [...tags, call].join(", ");
+
+    // The anchor may arrive inside a longer tag: an entry carrying both `pubic
+    // hair` and `excessive pubic hair` licenses the call from either, and a frame
+    // that kept only the rung tag still renders the anatomy. Whole words only, so
+    // `ass` is not anchored by `classic dress`. The call goes after the last
+    // member of that group, which is the order the registry entry itself uses.
+    let at = -1;
+    for (let i = 0; i < tags.length; i++) {
+        if (` ${tagFingerprint(tags[i])} `.includes(` ${anchor} `)) at = i;
+    }
+    if (at < 0) return null;
+
+    tags.splice(at + 1, 0, call);
+    return tags.join(", ");
+}
+
+/**
  * Validates and clamps a parsed reply into something safe to hand to ComfyUI.
  *
  * Fails closed: anything ambiguous becomes a skip rather than a guess.
@@ -296,7 +362,7 @@ function capTags(prompt, maxTags) {
  * @param {number} [options.maxTags=0] - Hard cap on tags per prompt; 0 disables it
  * @param {any} [options.bannedTags] - Tags to strip; comma-separated string or array
  * @param {"always" | "judge"} [options.policy="judge"] - Whether the model is the judge
- * @param {Array<{name: string, loras: string[]}>} [options.registryLoras] - Registry-pinned LoRA calls to guarantee
+ * @param {Array<{name: string, loras: Array<{call: string, anchor: string}>}>} [options.registryLoras] - Registry-pinned LoRA calls to guarantee
  * @returns {{generate: boolean, reason: string, images: Array<{prompt: string, ar: string, shot: string, characters: string[]}>, notes: string[]}}
  */
 export function validateDirective(parsed, { maxImages = 1, maxTags = 0, bannedTags = "", policy = "judge", registryLoras = [] } = {}) {
@@ -310,11 +376,16 @@ export function validateDirective(parsed, { maxImages = 1, maxTags = 0, bannedTa
     // Registry-pinned LoRA calls, keyed by lowercased character name. Empty
     // unless the caller passed any, which it only does while the setting that
     // permits registry LoRA calls is on — so the default path is untouched.
-    /** @type {Map<string, string[]>} */
+    /** @type {Map<string, Array<{call: string, anchor: string}>>} */
     const loraByCharacter = new Map();
     for (const source of Array.isArray(registryLoras) ? registryLoras : []) {
         const name = String(source?.name ?? "").trim().toLowerCase();
-        const calls = Array.isArray(source?.loras) ? source.loras.filter(Boolean) : [];
+        const calls = (Array.isArray(source?.loras) ? source.loras : [])
+            .map(pin => ({
+                call: String(pin?.call ?? pin ?? "").trim(),
+                anchor: tagFingerprint(pin?.anchor ?? ""),
+            }))
+            .filter(pin => pin.call);
         if (name && calls.length) loraByCharacter.set(name, calls);
     }
 
@@ -412,6 +483,14 @@ export function validateDirective(parsed, { maxImages = 1, maxTags = 0, bannedTa
         // model that ignored the instruction is exactly the model the pin exists
         // for.
         //
+        // The guarantee is to the character, not to the frame. A call that renders
+        // one tag is pinned to that tag, and a frame the tag is out of has nothing
+        // for it to render: restoring it there paints the anatomy through her
+        // clothes, which is the bug this gate exists for. So an anchored call is
+        // only put back where its anchor survived into this prompt, and whatever
+        // decided the tag decides the call with it. An anchorless character LoRA
+        // stays unconditional.
+        //
         // Deliberately after the tag cap and not counted by it. The cap bounds
         // scene complexity, which is the model's work; a pinned call is the
         // user's, and dropping their call to make room for the model's twentieth
@@ -420,21 +499,38 @@ export function validateDirective(parsed, { maxImages = 1, maxTags = 0, bannedTa
         if (loraByCharacter.size) {
             const wanted = [];
             for (const name of characters) {
-                for (const call of loraByCharacter.get(name.toLowerCase()) || []) {
-                    if (!wanted.includes(call)) wanted.push(call);
+                for (const pin of loraByCharacter.get(name.toLowerCase()) || []) {
+                    const seen = wanted.some(other => other.call.toLowerCase() === pin.call.toLowerCase());
+                    if (!seen) wanted.push(pin);
                 }
             }
 
             const present = new Set(extractLoraCalls(prompt).map(call => call.toLowerCase()));
-            const missing = wanted.filter(call => !present.has(call.toLowerCase()));
-            if (missing.length) {
-                const restored = `${prompt}, ${missing.join(", ")}`;
-                if (restored.length <= MAX_PROMPT_CHARS) {
-                    prompt = restored;
-                    notes.push(`Re-inserted ${missing.length} registry LoRA call${missing.length === 1 ? "" : "s"} the reply dropped: ${missing.join(", ")}.`);
-                } else {
-                    notes.push(`No room left for ${missing.length} registry LoRA call${missing.length === 1 ? "" : "s"} — the prompt is at the ${MAX_PROMPT_CHARS}-character cap.`);
+            const restored = [];
+            const declined = [];
+
+            for (const pin of wanted) {
+                if (present.has(pin.call.toLowerCase())) continue;
+
+                const next = withLoraCall(prompt, pin.call, pin.anchor);
+                if (next === null) {
+                    declined.push(pin);
+                    continue;
                 }
+                if (next.length > MAX_PROMPT_CHARS) {
+                    notes.push(`No room left for the registry LoRA call ${pin.call} — the prompt is at the ${MAX_PROMPT_CHARS}-character cap.`);
+                    continue;
+                }
+                prompt = next;
+                restored.push(pin.call);
+            }
+
+            if (restored.length) {
+                notes.push(`Re-inserted ${restored.length} registry LoRA call${restored.length === 1 ? "" : "s"} the reply dropped: ${restored.join(", ")}.`);
+            }
+            if (declined.length) {
+                const listed = declined.map(pin => `${pin.call} (${pin.anchor})`).join(", ");
+                notes.push(`Left out ${declined.length} registry LoRA call${declined.length === 1 ? "" : "s"} whose tag this frame does not carry: ${listed}.`);
             }
         }
 
