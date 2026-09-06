@@ -326,7 +326,14 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
                     : "Image generation failed. Press Retry on the message to try again.",
                 manual
             );
-            return appended;
+            // Keep going rather than abandoning the rest of this request's slots.
+            // A failed first slot leaves a Retry-able placeholder holding its own
+            // prompt, framing and seed; returning here would silently discard every
+            // slot after it, and the message's failure placeholder is what stops the
+            // auto-director re-running, so nothing would ever ask for them again.
+            // The marker path already continues past a generation_error for the same
+            // reason.
+            continue;
         }
 
         if (signal.aborted) {

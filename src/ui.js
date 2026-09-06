@@ -94,6 +94,7 @@ const PROMPTER_FIELDS = [
     ["#comfyinject_prompter_debug", "prompter_debug", "checkbox"],
     ["#comfyinject_prompter_system_prompt", "prompter_system_prompt", "text"],
     ["#comfyinject_prompter_constraints", "prompter_constraints", "text"],
+    ["#comfyinject_prompter_user_instructions", "prompter_user_instructions", "text"],
     ["#comfyinject_prompter_banned_tags", "prompter_banned_tags", "text"],
     ["#comfyinject_prompter_frame_focus_pool", "prompter_frame_focus_pool", "text"],
     ["#comfyinject_prompter_frame_manner_pool", "prompter_frame_manner_pool", "text"],

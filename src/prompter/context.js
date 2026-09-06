@@ -88,6 +88,24 @@ function buildConstraintsSection(settings) {
     return body ? [{ title: "CONSTRAINTS", body }] : [];
 }
 
+/**
+ * The user's own standing orders — a checklist or reminder that has to be obeyed
+ * on every request.
+ *
+ * Placed in the stable block right after CONSTRAINTS, so it lives in the cached
+ * prefix alongside the other standing text rather than being re-sent at the
+ * volatile block's full price on every message. It is deliberately not FINAL
+ * INSTRUCTIONS: that section owns the last, recency-strong slot for a rule that
+ * has to beat a contradicting shipped default, while this one is for directives
+ * that have to be stated at all. A directive that merely has to be present
+ * belongs in the cheap half; one that has to *win* belongs in FINAL.
+ * @returns {Section[]}
+ */
+function buildUserInstructionsSection(settings) {
+    const body = substituteTrimmed(settings.prompter_user_instructions);
+    return body ? [{ title: "USER INSTRUCTIONS", body }] : [];
+}
+
 /** @returns {Section[]} */
 function buildSessionSection() {
     const context = ctx();
@@ -496,6 +514,7 @@ export async function buildPrompterContext({ messageIndex = null, structuredMode
 
     stable.push(...buildTaskSection(settings));
     stable.push(...buildConstraintsSection(settings));
+    stable.push(...buildUserInstructionsSection(settings));
     if (!registryIsVolatile) stable.push(...appearanceSections);
     stable.push(...buildSessionSection());
 

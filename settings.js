@@ -252,6 +252,18 @@ export const defaultSettings = Object.freeze({
     // prefix, a short override that has to win belongs last.
     prompter_constraints: "",
 
+    // Rendered as the USER INSTRUCTIONS section, right after CONSTRAINTS in the
+    // cacheable half of the request. Omitted when empty.
+    //
+    // This is the high-priority slot for the user's own standing orders — a
+    // checklist, a reminder, a rule that must always be obeyed. Separate from
+    // CONSTRAINTS by intent: CONSTRAINTS is for facts about your renderer
+    // ("this checkpoint draws one figure only"), USER INSTRUCTIONS is for
+    // directives ("always draw the character's scar", "never reuse the last
+    // framing"). FINAL INSTRUCTIONS still owns the last, recency-strong slot —
+    // this field is for what has to be *said*, not for what has to *win*.
+    prompter_user_instructions: "",
+
     // The `prompt` string in the filled example inside OUTPUT RULES. An example
     // of a good reply outweighs prose about what a good reply looks like, so
     // this is the field to shorten for a checkpoint that can only draw simple

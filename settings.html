@@ -433,6 +433,18 @@
                 </div>
 
                 <div class="comfyinject-stack">
+                    <label for="comfyinject_prompter_user_instructions">User Instructions</label>
+                    <textarea id="comfyinject_prompter_user_instructions" class="text_pole" rows="5"></textarea>
+                    <small>
+                        Rendered as the <b>USER INSTRUCTIONS</b> section, right after <b>Constraints</b>;
+                        left out when empty. The slot for your own standing orders — a checklist or reminder the
+                        prompter must obey on every request. Facts about your <i>checkpoint</i> still belong in
+                        <b>Constraints</b>; an override that has to beat a shipped default belongs in
+                        <b>Final Instructions</b>. Sits in the cached half of the request.
+                    </small>
+                </div>
+
+                <div class="comfyinject-stack">
                     <label for="comfyinject_prompter_example_prompt">Example Image Prompt</label>
                     <textarea id="comfyinject_prompter_example_prompt" class="text_pole" rows="3"></textarea>
                     <div class="flex-container flexGap5 comfyinject-row">

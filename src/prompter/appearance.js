@@ -699,9 +699,10 @@ function buildSeedChatSections(settings) {
  * Builds the seeding prompt from the cast, every bound lorebook, and the chat.
  * @param {object} [options]
  * @param {"native" | "json" | null} [options.structuredMode] - Forces whether OUTPUT RULES restates the schema
+ * @param {string} [options.manualSeedNote] - One-off user request for this manual pass only; "" on an automatic pass
  * @returns {Promise<{systemPrompt: string, sections: Array<{title: string, body: string}>, cast: string[]} | null>}
  */
-async function buildSeedContext({ structuredMode = null } = {}) {
+async function buildSeedContext({ structuredMode = null, manualSeedNote = "" } = {}) {
     await ensureCardsLoaded();
 
     const settings = getSettings();
@@ -751,6 +752,17 @@ async function buildSeedContext({ structuredMode = null } = {}) {
             maxChars: registryMaxChars(),
         }),
     });
+
+    // A one-off request typed beside the manual seed button, obeyed for this pass
+    // and then gone. Never sent on an automatic pass: it answers "what should
+    // this seeding run pay attention to right now", and an automatic run has no
+    // one there to answer. Rendered after OUTPUT RULES so it outranks the
+    // reference material, but before FINAL INSTRUCTIONS, which is the section the
+    // user owns across every pass rather than this one.
+    const note = substituteTrimmed(manualSeedNote);
+    if (note) {
+        sections.push({ title: "USER INSTRUCTIONS (this seeding pass only)", body: note });
+    }
 
     // The seeding pass's own last word, and deliberately not shared with the
     // directive pass's. The two ask different questions: generation policy is
@@ -815,20 +827,91 @@ export function validateAppearanceReply(parsed, { bannedTags = "" } = {}) {
 }
 
 /**
+ * A copy of the registry as it stands right now, for the merge pass in
+ * seedRegistry. Read live rather than captured at the start of the pass so two
+ * short forms of the same person in one reply collapse into one write.
+ * @returns {Record<string, any>}
+ */
+function registrySnapshot() {
+    return { ...readRegistry() };
+}
+
+/**
+ * The registry entry a name is a short form of, if there is one.
+ *
+ * "Mitsue" is a short form of "Asakura Mitsue" when it is a whole token of the
+ * longer name and the longer name is the only registered name that contains it.
+ * A token that appears in two different registered names is genuinely ambiguous
+ * and matches nothing — merging into one of them at random would be the worse
+ * bug. Case-insensitive, because the registry is keyed case-insensitively
+ * everywhere else.
+ *
+ * @param {string} name - The name the model returned
+ * @param {Record<string, any>} registry - Snapshot of the current registry
+ * @returns {{key: string, name: string, tags: string} | null}
+ */
+function findMatchingEntry(name, registry) {
+    const wanted = trim(name).toLowerCase();
+    if (!wanted) return null;
+
+    const candidates = [];
+    for (const [key, value] of Object.entries(registry)) {
+        if (!value || typeof value !== "object") continue;
+        const full = trim(value.name).toLowerCase();
+        if (!full || full === wanted) continue;
+        // Whole tokens only, so "Ana" never matches "Anastasia". Either direction:
+        // the reply may be the short form of a registered full name, or the full
+        // form of a short name the registry already holds (grown or seeded first).
+        const wantedTokens = wanted.split(/\s+/);
+        const fullTokens = full.split(/\s+/);
+        const shortIsPart = fullTokens.includes(wanted) && wantedTokens.length < fullTokens.length;
+        const fullIsPart = wantedTokens.includes(full) && fullTokens.length < wantedTokens.length;
+        if (shortIsPart || fullIsPart) candidates.push({ key, name: trim(value.name), tags: trim(value.tags) });
+    }
+    return candidates.length === 1 ? candidates[0] : null;
+}
+
+/**
+ * Two tag strings joined with duplicates removed, order preserved, first string
+ * first. The existing entry wins ties: it is what has actually been sent so far,
+ * and a short-form reply is adding detail to it, not replacing it.
+ * @param {string} a
+ * @param {string} b
+ * @returns {string}
+ */
+function mergeTags(a, b) {
+    const seen = new Set();
+    const out = [];
+    for (const source of [a, b]) {
+        for (const raw of String(source ?? "").split(",")) {
+            const tag = raw.trim().replace(/\s+/g, " ");
+            if (!tag) continue;
+            const fingerprint = tagFingerprint(tag);
+            if (seen.has(fingerprint)) continue;
+            seen.add(fingerprint);
+            out.push(tag);
+        }
+    }
+    return out.join(", ");
+}
+
+/**
  * Runs the seeding pass: one LLM call over the cards, the bound lorebooks and the
  * chat, writing a registry entry per character it can describe.
  *
  * @param {object} [options]
  * @param {AbortSignal | null} [options.signal]
+ * @param {string} [options.manualSeedNote] - One-off user request obeyed for this
+ * manual pass only; never sent on an automatic pass
  * @returns {Promise<{written: string[], skipped: string[], seen: number}>}
  * @throws {Error} On a transport or parse failure — the caller decides how loud that is
  */
-export async function seedRegistry({ signal = null } = {}) {
+export async function seedRegistry({ signal = null, manualSeedNote = "" } = {}) {
     if (seedingInFlight) throw new Error("A seeding pass is already running.");
 
     seedingInFlight = true;
     try {
-        const built = await buildSeedContext();
+        const built = await buildSeedContext({ manualSeedNote });
         if (!built) throw new Error("No character card to seed from.");
 
         debugLog("seeding the appearance registry", { cast: built.cast, chars: built.systemPrompt.length });
@@ -850,7 +933,7 @@ export async function seedRegistry({ signal = null } = {}) {
                 || substituteTrimmed(DEFAULT_PROMPTER_SEED_USER_TURN),
             // Put the schema JSON back if the backend refuses to enforce it.
             rebuild: async (structuredMode) => {
-                const rebuilt = await buildSeedContext({ structuredMode });
+                const rebuilt = await buildSeedContext({ structuredMode, manualSeedNote });
                 return rebuilt ? [{ role: "system", content: rebuilt.systemPrompt }] : [];
             },
             // A full cast needs more room than a single image directive does.
@@ -866,6 +949,28 @@ export async function seedRegistry({ signal = null } = {}) {
         for (const character of characters) {
             const key = resolveCharacterKey(character.name);
             if (!key) continue;
+
+            // A short-form name for someone already in the registry is the same
+            // person, not a new one. The model is told so in the seeding
+            // instructions, but a reply that still splits "Mitsue" off from
+            // "Asakura Mitsue" must not write a second row — merge it into the
+            // existing cast entry rather than leaving two keys for one body.
+            const existing = findMatchingEntry(character.name, registrySnapshot());
+            if (existing) {
+                // Keep whichever name is fuller — the short form is only ever a
+                // fragment of the person, and the row is what the editor shows.
+                const mergedName = existing.name.length >= trim(character.name).length
+                    ? existing.name
+                    : character.name;
+                const merged = mergeTags(existing.tags, character.tags);
+                if (setRegistryEntry(existing.key, { name: mergedName, tags: merged, source: "seed" })) {
+                    written.push(mergedName);
+                } else {
+                    skipped.push(mergedName);
+                }
+                continue;
+            }
+
             if (setRegistryEntry(key, { name: character.name, tags: character.tags, source: "seed" })) {
                 written.push(character.name);
             } else {

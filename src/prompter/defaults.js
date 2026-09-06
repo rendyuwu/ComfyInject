@@ -112,6 +112,7 @@ export const DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT = `You extract stable physical 
 
 Rules:
 - One entry per character in the CAST section, plus any other named character who has actually appeared in CHAT SO FAR. Use each character's name exactly as it is written there.
+- One person, one entry. A short form from the chat or a lorebook — "Mitsue" for the CAST member "Asakura Mitsue" — is the same person, not a second character: put everything you know about them in that one CAST entry, using the full name, and never write a second entry under the short form.
 - Do not add characters who exist only in the LOREBOOKS and have not appeared in this chat. Two chats on the same character card follow different paths and must not end up with the same registry.
 - CHAT SO FAR outranks CAST and LOREBOOKS. Where this chat has changed how someone looks — a different outfit, a haircut, a scar, a timeskip, a disguise — describe them as they are now, not as the card describes them.
 - Booru-style comma-separated tags only. No sentences, no narration.

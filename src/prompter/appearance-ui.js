@@ -68,6 +68,14 @@ const pendingWrites = new Map();
 
 let seeding = false;
 
+// The one-off note typed beside the manual seed button. Kept in module state
+// rather than read off the DOM at click time: the overlay re-renders its body on
+// every edit, and a value that lived only in the textarea would vanish with the
+// first re-render. It is deliberately not a setting and not chat state — it
+// applies to the next manual pass and is cleared once that pass runs, so it can
+// never leak into an automatic one.
+let manualSeedNote = "";
+
 /**
  * @param {string} source
  * @returns {string}
@@ -274,7 +282,12 @@ async function runSeeding(rerender) {
     seeding = true;
     toastr.info("Reading the character cards, lorebooks and this chat…", "ComfyInject");
     try {
-        const result = await seedRegistry();
+        const result = await seedRegistry({ manualSeedNote });
+        // The note is obeyed by one pass and one pass only. Cleared on success
+        // rather than before the call: a pass that never reached the backend has
+        // not obeyed anything, and throwing the text away would make a transport
+        // hiccup cost the user their instructions.
+        manualSeedNote = "";
         if (!overlayIsOpen()) return;
 
         if (result.written.length) {
@@ -294,6 +307,43 @@ async function runSeeding(rerender) {
     } finally {
         seeding = false;
     }
+}
+
+/**
+ * The one-off instruction row for the next manual seeding pass.
+ *
+ * Bound to module state rather than written back on every keystroke with a
+ * debounce, because the overlay re-renders its whole body after any edit — a
+ * value that lived only in the DOM would be lost the first time a row rebuild
+ * fired. Re-rendering restores the field from `manualSeedNote`, which is why the
+ * textarea shows what was typed even after the overlay repaints.
+ *
+ * It is not a setting and is cleared the moment a manual pass runs: an automatic
+ * pass must never see it, and persisting it would do exactly that.
+ * @returns {HTMLElement}
+ */
+function buildSeedNoteRow() {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "margin-bottom: 12px;";
+
+    const label = document.createElement("label");
+    label.style.cssText = "display: block; font-size: 13px; margin-bottom: 4px;";
+    label.textContent = "Instructions for the next manual seeding pass (optional)";
+    label.htmlFor = "comfyinject_appearance_seed_note";
+
+    const note = document.createElement("textarea");
+    note.id = "comfyinject_appearance_seed_note";
+    note.className = "text_pole";
+    note.rows = 3;
+    note.style.cssText = "width: 100%; font-size: 12px;";
+    note.placeholder = "e.g. focus on the two new NPCs from the last scene — sent only when Seed from card, lore + chat is clicked, never on an automatic pass";
+    note.value = manualSeedNote;
+    note.addEventListener("input", () => {
+        manualSeedNote = note.value.trim();
+    });
+
+    wrap.append(label, note);
+    return wrap;
 }
 
 /**
@@ -334,6 +384,8 @@ export function openAppearanceEditor() {
             off.textContent = "\"Use the appearance registry\" is off, so nothing here is sent to the prompter. Editing still works.";
             body.appendChild(off);
         }
+
+        body.appendChild(buildSeedNoteRow());
 
         if (!entries.length) {
             const empty = document.createElement("div");
