@@ -231,19 +231,27 @@ async function runDirector(messageIndex, { manual }) {
         // three — so this is the same roll the request was sent with.
         const frameDirections = frameDirectionsFor(settings, message, settings.prompter_max_images_per_message);
 
-        const produced = await generateAndAppend({
+        const landedSlots = new Set(await generateAndAppend({
             sendDate,
             fallbackIndex: messageIndex,
             images: validated.images,
             reason: validated.reason,
             signal,
             manual,
-        });
+        }));
 
-        // Only a run that put a frame on screen advances the rotation. Recording a
+        // Only a frame that reached the screen advances the rotation. Recording a
         // roll that ComfyUI refused, or one whose chat has since been switched
         // away from, would make the next turn avoid values nothing was drawn from.
-        if (produced && !signal.aborted) recordFrameDirections(frameDirections);
+        //
+        // Per slot, not all-or-nothing, and matched by position rather than by
+        // count. A failed slot is skipped rather than ending the run, so the
+        // images that land are not contiguous: with image 1 failing and image 2
+        // landing, exactly one image exists and it is slot 1's. Anything derived
+        // from a count reads that as slot 0 and stalls the rotation on the slot
+        // that actually rendered.
+        const drawn = frameDirections.filter(direction => landedSlots.has(direction.slot));
+        if (drawn.length && !signal.aborted) recordFrameDirections(drawn);
     } finally {
         inFlight = false;
         controller = null;
@@ -264,20 +272,23 @@ async function runDirector(messageIndex, { manual }) {
  * @param {string} params.reason
  * @param {AbortSignal} params.signal
  * @param {boolean} params.manual
- * @returns {Promise<number>} How many images actually landed in the message
+ * @returns {Promise<number[]>} The slot indices that actually landed in the
+ * message. Positions, not a count: a failed slot is skipped rather than
+ * abandoning the rest of the request, so the images that land are not
+ * contiguous from 0 and a count cannot say which slot a given one was.
  */
 async function generateAndAppend({ sendDate, fallbackIndex, images, reason, signal, manual }) {
-    let appended = 0;
+    const landed = [];
 
     for (let i = 0; i < images.length; i++) {
-        if (signal.aborted) return appended;
+        if (signal.aborted) return landed;
 
         let index = findIndexBySendDate(sendDate);
         if (index === -1) index = fallbackIndex;
         let message = ctx().chat?.[index];
         if (!message || message.send_date !== sendDate) {
             debugLog("target message is gone, stopping");
-            return appended;
+            return landed;
         }
 
         const image = images[i];
@@ -338,14 +349,14 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
 
         if (signal.aborted) {
             debugLog("aborted after generation, discarding the image");
-            return appended;
+            return landed;
         }
 
         // Re-resolve after the await: messages may have been deleted or moved.
         index = findIndexBySendDate(sendDate);
         if (index === -1) {
             debugLog("target message vanished while generating, discarding the image");
-            return appended;
+            return landed;
         }
         message = ctx().chat[index];
 
@@ -367,11 +378,11 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
             characters: image.characters,
         }], { appendMetadata: true });
 
-        appended++;
+        landed.push(i);
         console.log(`[ComfyInject] Prompter image appended to message ${index}`);
     }
 
-    return appended;
+    return landed;
 }
 
 /**

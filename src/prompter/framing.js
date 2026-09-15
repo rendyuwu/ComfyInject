@@ -49,9 +49,13 @@ const MANNER_SALT = "manner";
 // carries one field, and silence about the other has to read as "unconstrained"
 // rather than as an omission the model should fill in.
 const FRAME_DIRECTION_DISCIPLINE = [
-    'One line per image slot this request allows; "image 1" is the first entry in',
-    '"images". That slot\'s frame emphasises the named region and carries the named',
-    "manner; how it gets there is yours to choose. An absent field is unconstrained.",
+    'One line per directed image slot; "image 1" is the first entry in "images".',
+    "That slot's frame emphasises the named region and carries the named manner;",
+    "how it gets there is yours to choose. An absent field is unconstrained. A slot",
+    "with no line of its own takes no direction at all: it is framed from the scene,",
+    "not from this section. Where only one image comes back it is the private frame",
+    "and takes the direction listed here, whichever slot that line names — a",
+    "recovery, never a choice.",
 ].join("\n");
 
 /** @returns {any} */
@@ -188,7 +192,12 @@ export function rollFrameDirections({ sendDate, slots, focusPool = [], mannerPoo
     const key = String(sendDate ?? "");
     const directions = [];
 
-    for (let slot = 0; slot < count; slot++) {
+    // Image 1 is the scene frame whenever a second slot exists: it answers to
+    // fidelity, so a rolled focus region is an instruction to compose a frame
+    // the text did not call for, which is the one thing that frame may not do.
+    // A lone slot is the private frame instead, and that one does take a
+    // direction.
+    for (let slot = count > 1 ? 1 : 0; slot < count; slot++) {
         const before = previousForSlot(previous, slot);
         directions.push({
             slot,
