@@ -1,7 +1,7 @@
 {
   "1": {
     "inputs": {
-      "unet_name": "{{CHECKPOINT}}",
+      "unet_name": "moodyAmateurMixFreeKrea2_6RealLifeGF_int8.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
