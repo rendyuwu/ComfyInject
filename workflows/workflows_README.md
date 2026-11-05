@@ -49,6 +49,32 @@ If resolution or shot lock is active, the locked values are used regardless of w
 
 ---
 
+## Krea 2 Turbo
+
+`krea2_turbo.json` is the API-format graph for Krea 2 Turbo: `UNETLoader` for the distilled
+checkpoint, `CLIPLoader` with type `krea2` over the `qwen3vl_4b` text encoder, `qwen_image_vae`,
+and a `LoraTagLoader` in the prompt path so `<lora:name:weight>` calls written into the prompt
+are applied and stripped before the text encoder sees them. That node is a custom node — without
+it installed, ComfyUI will report a missing node instead of rendering.
+
+It expects the same placeholders as any other workflow here, and three settings the graph cannot
+state for itself:
+
+- **Steps `8`, CFG `1.0`.** Turbo is distilled for eight steps and runs guidance-free. In a
+  stock `KSampler`, CFG `1.0` is how guidance-off is spelled; `0.0` produces unconditional
+  output. The negative prompt is zeroed in the graph, so the Negative Prompt setting is unused.
+- **Resolution 1024 and up.** Krea 2 was trained at 2048 and degrades below 1024: portrait
+  `1024x1536`, square `1024x1024`, landscape `1536x1024`, cinema `1536x864`. Keep both sides
+  divisible by 16.
+- **Sampler / scheduler `euler` / `simple`.** The Krea 2 time shift (`mu` 1.15) is applied by
+  ComfyUI's own model class, so no `ModelSampling` node is needed.
+
+Prompts for this model are natural-language paragraphs, not tag lists, so the shot-tag fields
+belong empty and the prose owns the framing. `dev/comfyinject-prompter-krea2-nsfw.txt` is a
+matching prompter settings file.
+
+---
+
 ## Using a Custom Workflow
 
 1. Export your workflow from ComfyUI using **Save (API format)** — not the regular Save.

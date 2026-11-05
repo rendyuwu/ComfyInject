@@ -102,7 +102,13 @@ export function buildDirectiveSchema() {
                     properties: {
                         prompt: {
                             type: "string",
-                            description: "Booru-style comma-separated tags, most important first.",
+                            // Style-neutral on purpose. This schema is restated in
+                            // OUTPUT RULES on every request, so a description that
+                            // says "booru tags" fights a TASK that asks for prose —
+                            // and one that says "prose" fights a booru install.
+                            // What both styles share is ordering, so that is all it
+                            // states.
+                            description: "The image prompt: describe what is visible in frame, most important first.",
                         },
                         ar: {
                             type: "string",

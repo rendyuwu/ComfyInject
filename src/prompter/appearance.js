@@ -110,7 +110,7 @@ export function registryMaxChars() {
 // registry worth having, and a registry the model is free to contradict is not a
 // registry.
 export const REGISTRY_DISCIPLINE =
-    "Use these tags verbatim for the characters listed. Do not invent hair, eye or outfit details that contradict them.";
+    "Use these descriptions verbatim for the characters listed. Do not invent hair, eye or outfit details that contradict them.";
 
 // Chats whose seeding pass failed this session. A transport error should not
 // re-fire on every single message, but it should not be remembered across a
@@ -594,7 +594,12 @@ export function buildAppearanceSchema() {
                         },
                         tags: {
                             type: "string",
-                            description: "Booru-style comma-separated appearance tags.",
+                            // Neutral for the same reason the directive schema's
+                            // prompt description is: a photoreal checkpoint takes
+                            // a prose identity block where a booru checkpoint takes
+                            // tags, and this string is restated to the model on
+                            // every seeding pass.
+                            description: "The character's stable physical appearance: hair, eyes, skin, build, breasts, body hair, permanent marks.",
                         },
                     },
                 },
@@ -1080,6 +1085,15 @@ const TRANSIENT_TAG_PATTERNS = [
  * @returns {string}
  */
 export function distillAppearanceTags(prompt) {
+    // A prompt written as sentences is prose, not tags, and this reduction cannot
+    // read prose: it keeps comma clauses under forty characters, so a paragraph
+    // leaves behind "dark brown eyes" beside "fine film grain" and the pose it
+    // came from — a partial identity with a texture tag welded into her body,
+    // frozen because grown entries are only written once. Sentence punctuation
+    // followed by a capital is the one signal a tag list never has, and skipping
+    // growth costs only the first guess an unseeded character would have got.
+    if (/[.!?]\s+[A-Z]/.test(String(prompt ?? ""))) return "";
+
     const kept = String(prompt ?? "")
         .split(",")
         .map(tag => tag.trim())
