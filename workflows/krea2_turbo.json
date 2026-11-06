@@ -40,10 +40,23 @@
       "title": "Empty Latent Image"
     }
   },
+  "11": {
+    "inputs": {
+      "shift": 1.15,
+      "model": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3 (Krea 2 shift 1.15)"
+    }
+  },
   "10": {
     "inputs": {
       "model": [
-        "1",
+        "11",
         0
       ],
       "clip": [
