@@ -2,6 +2,7 @@ import { initDom } from "./src/dom.js";
 import { initUI } from "./src/ui.js";
 import { initLazyImages } from "./src/lazy-images.js";
 import { initCleanup } from "./src/cleanup.js";
+import { initLightbox } from "./src/lightbox.js";
 import { initDirector } from "./src/prompter/director.js";
 import { MODULE_NAME, defaultSettings, DEFAULT_PROMPTER_SEED_SYSTEM_PROMPT } from "./settings.js";
 // Straight from defaults.js: this is not text any field is ever set to, only a
@@ -64,6 +65,7 @@ function migrateSeedSystemPrompt(saved) {
 
     initSettings();
     initLazyImages();
+    initLightbox();
     await initUI();
     initDom();
     // After initDom: ST's event emitter awaits listeners in registration order,
