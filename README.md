@@ -399,6 +399,22 @@ If any segment is invalid or missing, regenerate the entire marker before contin
 Never explain or mention the marker in narration.
 ```
 
+> **Anima variant.** For Anima — or any checkpoint trained on Danbooru tags — that block's `PROMPT` order is older than the tag order the model documents. Keep the rest of the block and use this for the four steps:
+>
+> ```
+> 1. Count (1girl, 1boy, 2girls)
+> 2. Character tag, when the character is from a known work: her Danbooru name tag
+> 3. Series tag, immediately after the character tag
+> 4. General tags (appearance, clothing, pose, expression, setting, light)
+>
+> Lowercase tags with spaces, never underscores. A display name is not a tag:
+> "Oomuro Sakurako" renders nobody, "oomuro sakurako, yuru yuri" is the pair the model knows.
+> Never write quality, score or safety tags — the extension prepends those.
+> Never write an artist tag — the Append Prompt carries it.
+> ```
+>
+> The example marker in the block is still a valid general-tag tail for an original character. `dev/comfyinject-prompter-anima.txt` is the dedicated-mode equivalent.
+
 > **Model recommendations:** Larger models (70B+) or cloud APIs like DeepSeek V3.2 follow the format far more reliably than small local models. Models under 13B tend to produce inconsistent markers and hallucinate character details. However, with update v0.3.0, many of the previously rejected markers from smaller models will now parse correctly and produce an image regardless. 
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

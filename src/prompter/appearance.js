@@ -110,7 +110,7 @@ export function registryMaxChars() {
 // registry worth having, and a registry the model is free to contradict is not a
 // registry.
 export const REGISTRY_DISCIPLINE =
-    "Use these descriptions verbatim for the characters listed. Do not invent hair, eye or outfit details that contradict them.";
+    "Use these descriptions verbatim for the characters listed. Do not invent hair, eye or outfit details that contradict them. The outfit in an entry is the character's normal one: a later image in this chat overrides it when the story has changed her clothes.";
 
 // Chats whose seeding pass failed this session. A transport error should not
 // re-fire on every single message, but it should not be remembered across a
