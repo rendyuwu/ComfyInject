@@ -33,7 +33,7 @@ import { buildFailedTag, countFailedTags } from "../failtag.js";
 import { isTimeoutError as isFetchTimeout } from "../http.js";
 import { buildImgTag } from "../imgtag.js";
 import { notifyFailure, notifyWarning } from "../notify.js";
-import { ensureRegistrySeeded, growRegistry, listRegistryLoraCalls, resetAppearanceState } from "./appearance.js";
+import { ensureRegistrySeeded, growRegistry, listRegistryLoraCalls, registryPromptPrefix, resetAppearanceState } from "./appearance.js";
 import { buildPrompterContext } from "./context.js";
 import { frameDirectionsFor, recordFrameDirections } from "./framing.js";
 import { getErrorChain, isTimeoutError, runPrompter } from "./llm.js";
@@ -292,6 +292,9 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
         }
 
         const image = images[i];
+        // Outside the prompter's sight: read here, at send time, and never stored
+        // in the directive, the tag or the message.
+        const prefix = registryPromptPrefix(image.characters);
         const position = images.length > 1 ? ` ${i + 1}/${images.length}` : "";
         renderMessageWithSuffix(
             index,
@@ -311,6 +314,7 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
                 shot: image.shot,
                 seed,
                 messageIndex: index,
+                prefix,
             });
         } catch (err) {
             console.error("[ComfyInject] Dedicated-path image generation failed:", err);
@@ -328,6 +332,10 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
                     shot: image.shot,
                     seed,
                     error: err,
+                    // Without these the placeholder has no way to re-resolve the
+                    // ComfyUI-only prefix, and the Retry that exists for exactly
+                    // this failure would silently drop the character LoRA.
+                    characters: image.characters,
                 }));
                 await persistMessageImages(currentIndex, currentMessage, [], { appendMetadata: true });
             }

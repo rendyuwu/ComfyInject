@@ -19,6 +19,7 @@ import {
     saveRegistry,
     seedRegistry,
     setRegistryEntry,
+    setRegistryExtra,
 } from "./appearance.js";
 import { getErrorChain, isTimeoutError } from "./llm.js";
 import { escapeHtml, injectStyle, NARROW_QUERY, openOverlay, overlayIsOpen } from "./overlay.js";
@@ -26,10 +27,14 @@ import { escapeHtml, injectStyle, NARROW_QUERY, openOverlay, overlayIsOpen } fro
 // How long after the last keystroke an edited row is written back.
 const EDIT_DEBOUNCE_MS = 400;
 
-// A row is a name column, a tags field and a remove button. Wide enough, they
-// sit on one line. Narrow — a phone held upright — a 150px name column leaves
-// the tags field too thin to read a line of tags in, so the name and the remove
-// button take the first line and the field gets the whole of the second.
+// A row is a name column, a stack of two fields and a remove button. Wide enough,
+// they sit on one line. Narrow — a phone held upright — a 150px name column leaves
+// the fields too thin to read a line of tags in, so the name and the remove button
+// take the first line and the field stack gets the whole of the second.
+//
+// The two fields are the prompter-facing tags and the ComfyUI-only extra. They are
+// stacked rather than side by side because both hold comma-separated tag lists and
+// a half-width one wraps every three tags.
 const ROW_CSS = `
 .comfyinject-appearance-row {
     display: flex; gap: 8px; align-items: flex-start; padding: 8px 0;
@@ -41,8 +46,12 @@ const ROW_CSS = `
 .comfyinject-appearance-name {
     width: 150px; flex-shrink: 0; word-break: break-word;
 }
-.comfyinject-appearance-tags {
-    flex: 1; min-width: 0; font-size: 12px;
+.comfyinject-appearance-tags,
+.comfyinject-appearance-extra {
+    width: 100%; min-width: 0; font-size: 12px;
+}
+.comfyinject-appearance-fields {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px;
 }
 .comfyinject-appearance-button {
     flex-shrink: 0;
@@ -53,7 +62,7 @@ const ROW_CSS = `
     .comfyinject-appearance-add { flex-wrap: wrap; }
     .comfyinject-appearance-name { width: auto; flex: 1 1 auto; min-width: 0; order: 1; }
     .comfyinject-appearance-button { order: 2; }
-    .comfyinject-appearance-tags { order: 3; flex-basis: 100%; }
+    .comfyinject-appearance-fields { order: 3; flex-basis: 100%; }
 }
 `;
 
@@ -65,6 +74,11 @@ const SOURCE_LABELS = {
 
 /** @type {Map<string, number>} */
 const pendingWrites = new Map();
+
+// Separate from pendingWrites so the two fields cannot cancel each other's timer:
+// typing a LoRA and then editing tags would otherwise drop one of the two writes.
+/** @type {Map<string, number>} */
+const pendingExtraWrites = new Map();
 
 let seeding = false;
 
@@ -92,11 +106,16 @@ function renderSourceBadge(source) {
  * One editable row. The tags field writes back on a debounce and flips the
  * entry's source to "user", which locks it against both automatic sources.
  *
- * Clearing the field is a write, not a no-op: it stores the entry blank, which is
- * the tombstone that keeps a name out of every later request permanently. Deleting
+ * The second field is the opposite: ComfyUI-only text prepended at send time. It
+ * is written through setRegistryExtra() and leaves `source` alone, because pinning
+ * a LoRA is not an opinion about who the character is and must not freeze the row
+ * against seeding.
+ *
+ * Clearing the tags field is a write, not a no-op: it stores the entry blank, which
+ * is the tombstone that keeps a name out of every later request permanently. Deleting
  * the row instead only lasts until the next seeding pass rewrites it.
  *
- * @param {{key: string, name: string, tags: string, source: string, truncated: boolean, truncatedAt: number}} entry
+ * @param {{key: string, name: string, tags: string, source: string, truncated: boolean, truncatedAt: number, extra: string}} entry
  * @param {() => void} rerender
  * @returns {HTMLElement}
  */
@@ -174,7 +193,29 @@ function buildRow(entry, rerender) {
             writeTags(tags.value.trim());
         }, EDIT_DEBOUNCE_MS));
     });
-    row.appendChild(tags);
+
+    // The ComfyUI-only prefix. Hand-typed and never capped, so no re-read is
+    // needed to report what was stored — only the dedupe could change it, and that
+    // is re-shown when the overlay re-renders.
+    const extra = document.createElement("textarea");
+    extra.className = "text_pole comfyinject-appearance-extra";
+    extra.rows = 1;
+    extra.value = entry.extra;
+    extra.placeholder = "<lora:name:0.8> or extra tags — ComfyUI-only, prepended at send time";
+    extra.title = "Prepended to the image prompt right before ComfyUI is called. Never sent to the prompter, and editing it does not mark the row user.";
+    extra.addEventListener("input", () => {
+        clearTimeout(pendingExtraWrites.get(entry.key));
+        pendingExtraWrites.set(entry.key, setTimeout(() => {
+            pendingExtraWrites.delete(entry.key);
+            setRegistryExtra(entry.key, extra.value);
+            saveRegistry();
+        }, EDIT_DEBOUNCE_MS));
+    });
+
+    const fields = document.createElement("div");
+    fields.className = "comfyinject-appearance-fields";
+    fields.append(tags, extra);
+    row.appendChild(fields);
 
     const suppress = document.createElement("div");
     suppress.className = "menu_button comfyinject-appearance-button";
@@ -183,6 +224,10 @@ function buildRow(entry, rerender) {
     suppress.addEventListener("click", () => {
         clearTimeout(pendingWrites.get(entry.key));
         pendingWrites.delete(entry.key);
+        // The extra timer is deliberately left alone: suppressing writes the
+        // tombstone from the stored entry, so a prefix typed in the last 400 ms
+        // would be dropped while its textarea still shows it. The key survives, so
+        // that write is still valid.
         if (!tags.value.trim()) {
             toastr.info(`${entry.name} is already suppressed.`, "ComfyInject");
             return;
@@ -201,6 +246,8 @@ function buildRow(entry, rerender) {
     remove.addEventListener("click", () => {
         clearTimeout(pendingWrites.get(entry.key));
         pendingWrites.delete(entry.key);
+        clearTimeout(pendingExtraWrites.get(entry.key));
+        pendingExtraWrites.delete(entry.key);
         deleteRegistryEntry(entry.key);
         saveRegistry();
         rerender();
@@ -263,7 +310,14 @@ function buildAddRow(rerender) {
         rerender();
     });
 
-    row.append(name, tags, add);
+    // The same wrapper the editable rows use, so the narrow-viewport rule that
+    // gives the field stack the whole second line applies here too. Without it the
+    // bare textarea keeps order 0 and lands above the name input on a phone.
+    const fields = document.createElement("div");
+    fields.className = "comfyinject-appearance-fields";
+    fields.appendChild(tags);
+
+    row.append(name, fields, add);
     return row;
 }
 
@@ -374,6 +428,7 @@ export function openAppearanceEditor() {
             "These tags are sent to the prompter with every request, so a character keeps the same hair, eyes and outfit across images.",
             `Stored with this chat only — a new chat on the same character starts empty. ${entries.length} entry(ies), up to ${registryMaxChars()} characters each. Automatic seeding for this chat: ${describeSeedingState()}.`,
             "Editing a row marks it <b>user</b>, and a user row is never overwritten by seeding or by a generated image.",
+            "The second field under a row is <b>ComfyUI-only</b>: it is prepended to the image prompt at send time, never reaches the prompter, and editing it does not mark the row <b>user</b>. A character LoRA belongs there.",
             "Emptying a row's tags — or the <b>eye</b> button — <b>suppresses</b> that name: the row stays, nothing is sent for it, and seeding will not write it again. That is what a card that is a world, a narrator or a game master rather than a person wants. The <b>bin</b> only deletes, and the next seeding pass may put the row straight back.",
         ].join("<br />");
         body.appendChild(intro);

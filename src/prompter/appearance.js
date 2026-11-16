@@ -5,8 +5,13 @@
 // registry is where those tags are pinned down once and then reused.
 //
 //   chatMetadata.comfyinject_appearance = {
-//     "<key>": { name, tags, source: "seed" | "grown" | "user", updatedAt }
+//     "<key>": { name, tags, source: "seed" | "grown" | "user", updatedAt, extra? }
 //   }
+//
+// `extra` is the ComfyUI-only prefix: hand-typed text prepended to the positive
+// prompt at send time (src/comfy.js). It never goes to the prompter, the `<img>`
+// tag or the message text, it is not capped by "Registry entry size", and editing
+// it does not touch `source` — which is why it has its own writer.
 //
 // It lives in chat metadata rather than settings because the same character can
 // legitimately look different in different chats — an outfit change, a timeskip,
@@ -248,7 +253,7 @@ function mutableRegistry() {
  * would read as though the raise had not taken. 0 means it was not cut, or was
  * cut before the number was recorded.
  *
- * @returns {Array<{key: string, name: string, tags: string, source: string, updatedAt: number, truncated: boolean, truncatedAt: number}>}
+ * @returns {Array<{key: string, name: string, tags: string, source: string, updatedAt: number, truncated: boolean, truncatedAt: number, extra: string}>}
  */
 export function listRegistryEntries() {
     const entries = [];
@@ -263,6 +268,7 @@ export function listRegistryEntries() {
             updatedAt: Number(value.updatedAt) || 0,
             truncated: !!value.truncated || truncatedAt > 0,
             truncatedAt,
+            extra: trim(value.extra),
         });
     }
     return entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -355,7 +361,37 @@ export function setRegistryEntry(key, { name, tags, source }) {
         // The cap that cut it, not the cap in force whenever the row is next
         // rendered. Those diverge the moment the setting is raised.
         truncatedAt: clean.dropped > 0 ? maxChars : 0,
+        // Carried through untouched: seeding and growth replace `tags`, and the
+        // ComfyUI-only prefix is not theirs to drop.
+        extra: trim(existing?.extra),
     };
+    return true;
+}
+
+/**
+ * Writes one entry's ComfyUI-only prefix.
+ *
+ * Deliberately not routed through setRegistryEntry(): that would flip the source
+ * to "user" (freezing the row against seeding), re-run the tag cap over tags that
+ * already fit — erasing `truncated`/`truncatedAt` — and bump `updatedAt`. Pinning a
+ * LoRA is not an opinion about who the character is.
+ *
+ * The value is hand-typed and never sent to a language model, so the entry cap
+ * does not apply: normalizeTagsInfo(value, 0) is only here for the comma, space
+ * and duplicate normalization.
+ *
+ * @param {string} key
+ * @param {any} extra
+ * @returns {boolean} True when an entry was written
+ */
+export function setRegistryExtra(key, extra) {
+    const registry = mutableRegistry();
+    const entry = registry[key];
+    if (!entry || typeof entry !== "object") return false;
+
+    const clean = normalizeTagsInfo(extra, 0).tags;
+    if (clean) entry.extra = clean;
+    else delete entry.extra;
     return true;
 }
 
@@ -495,6 +531,71 @@ function mentionsName(haystack, name) {
         debugLog(`could not build a mention pattern for "${name}"`, err);
         return true;
     }
+}
+
+/**
+ * The registry entry a name refers to, or null.
+ *
+ * Three ways, because a name reaches this from three different places: a card in
+ * the cast (avatar filename), an entry whose name the cast no longer resolves, and
+ * the short form of a registered full name — the same ladder seeding uses.
+ *
+ * @param {string} name
+ * @param {Record<string, any>} registry
+ * @returns {any} The entry object, or null
+ */
+function findEntryForCharacter(name, registry) {
+    const entry = registry[resolveCharacterKey(name)];
+    if (entry && typeof entry === "object") return entry;
+
+    // One name can be carried by two rows — one keyed by the avatar filename, one
+    // by an `npc:` slug — and picking the first would be insertion order, which is
+    // arbitrary. findMatchingEntry declines the same ambiguity, so this rung
+    // declines too and lets the next one have it.
+    const wanted = trim(name).toLowerCase();
+    const named = Object.values(registry).filter(value =>
+        value && typeof value === "object" && trim(value.name).toLowerCase() === wanted);
+    if (named.length === 1) return named[0];
+
+    const match = findMatchingEntry(name, registry);
+    return match ? registry[match.key] ?? null : null;
+}
+
+/**
+ * The ComfyUI-only prefix for one image, from the characters the prompter drew.
+ *
+ * Read by nothing that builds a prompt for a language model: this text is
+ * prepended to the positive prompt at send time (src/comfy.js). That is what a
+ * character LoRA needs — it is required for a good render and useless to the
+ * prompter, and putting it in `tags` would send it to the LLM and, on the hand-edit
+ * path, freeze the row against seeding.
+ *
+ * Not gated on the registry switch or on `prompter_allow_registry_lora`: those
+ * govern what the prompter is told. Exact duplicate prefixes are dropped so two
+ * rows sharing one LoRA do not stack it; everything else joins in the order the
+ * prompter listed the characters.
+ *
+ * @param {string[]} names
+ * @returns {string}
+ */
+export function registryPromptPrefix(names) {
+    if (!Array.isArray(names) || !names.length) return "";
+
+    const registry = readRegistry();
+    const seen = new Set();
+    const parts = [];
+
+    for (const rawName of names) {
+        const name = trim(rawName);
+        if (!name) continue;
+        const entry = findEntryForCharacter(name, registry);
+        const extra = trim(entry?.extra);
+        if (!extra || seen.has(extra)) continue;
+        seen.add(extra);
+        parts.push(extra);
+    }
+
+    return parts.join(", ");
 }
 
 /**

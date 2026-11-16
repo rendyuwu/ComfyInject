@@ -218,7 +218,7 @@ Every prompt field whose shipped default is not empty has a **Restore default** 
 
 | Setting | Description |
 |---|---|
-| `Prepend Prompt` | Custom tags added to the **start** of every positive prompt, before shot tags and the LLM's output. |
+| `Prepend Prompt` | Custom tags added to the **start** of every positive prompt, before shot tags and the LLM's output. An appearance-registry row's ComfyUI-only field is prepended ahead of it. |
 | `Negative Prompt` | Negative prompt applied to every generation. |
 | `Append Prompt` | Custom tags added to the **end** of every positive prompt, after the LLM's output. |
 
@@ -736,6 +736,10 @@ The registry is per-chat, not global: the same character can legitimately look d
 
 `grown` entries are a heuristic and are labelled as one — that is exactly why the source badge exists. If one is wrong, fix it in the registry editor and it becomes a `user` entry that nothing will touch again.
 
+Each row has a second field, **ComfyUI-only**. Its text never reaches the prompter: it is prepended to the positive prompt at send time, ahead of **Prepend Prompt**, so it lands at the very start. That is where a character LoRA belongs — a LoRA pinned in a row's *tags* is sent to the prompter as a tag it must copy, and hand-editing `tags` flips the row to `user`, which stops seeding from ever refreshing that character again. Editing the ComfyUI-only field leaves the badge alone, so seeding and growth keep the tags current around your pinned prefix.
+
+Three consequences worth knowing. Macros do not expand in it, unlike **Prepend Prompt** — the text is sent as typed. It bypasses **Allow LoRA calls pinned in the registry**, because that setting governs what the prompter is allowed to carry. And clearing a row's tags suppresses it for the prompter without clearing its ComfyUI-only field; empty that field to stop it.
+
 **Overlap with Prepend Prompt.** [Prompt Control](#prompt-control)'s **Prepend Prompt** is added to *every* prompt unconditionally. The registry is per-character and selected by the prompter. They compose, so don't put the same appearance tags in both.
 
 ### The three tool buttons
@@ -744,7 +748,7 @@ At the bottom of the Dedicated Prompter panel:
 
 - **Preview Context** — shows exactly what would be sent, split into the stable system message and the volatile user message, section by section, with character counts per block, a total token count, and which transport would be used. Costs nothing and calls nothing. This is where to look first when the prompter's output is surprising: usually the answer is that a section you assumed was there is empty.
 - **Test Prompter** — runs one real request against the current chat's last message and shows the raw reply, the validated result, and any validation notes. **No image is generated.**
-- **Appearance Registry** — the editor. Per-row edit and delete, add by hand, seed on demand, clear all. Editing a row flips its badge to `user`.
+- **Appearance Registry** — the editor. Per-row edit and delete, add by hand, seed on demand, clear all. Editing a row's tags flips its badge to `user`; editing its ComfyUI-only field does not.
 
 Every bot message also gets a small wand button in its button row for running the prompter on that message by hand. That one is the only way to trigger anything when **Run automatically on new messages** is off.
 

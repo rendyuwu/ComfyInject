@@ -13,7 +13,7 @@ Your workflow JSON can use any of the following placeholder strings. ComfyInject
 | Placeholder | Type | Description |
 |---|---|---|
 | `"{{CHECKPOINT}}"` | string | Model filename from the Checkpoint field in settings |
-| `"{{POSITIVE_PROMPT}}"` | string | Prepend prompt + shot tags + LLM prompt + append prompt |
+| `"{{POSITIVE_PROMPT}}"` | string | Registry ComfyUI-only prefix + prepend prompt + shot tags + LLM prompt + append prompt |
 | `"{{NEGATIVE_PROMPT}}"` | string | Negative prompt from settings |
 | `"{{WIDTH}}"` | integer | Image width in pixels |
 | `"{{HEIGHT}}"` | integer | Image height in pixels |
@@ -40,10 +40,11 @@ Each placeholder can appear in **multiple places** across your workflow. Every o
 
 The `{{POSITIVE_PROMPT}}` placeholder is filled with the following components in order, separated by commas:
 
-1. **Prepend Prompt** — custom tags from the Prepend Prompt setting (if set)
-2. **Shot Tags** — Danbooru tags for the active shot type (e.g. `close-up, face focus` for CLOSE)
-3. **LLM Prompt** — the prompt the LLM wrote in the marker
-4. **Append Prompt** — custom tags from the Append Prompt setting (if set)
+1. **Registry ComfyUI-only prefix** — the second field of each involved character's appearance-registry row, resolved at send time (dedicated mode only; absent when the field is empty)
+2. **Prepend Prompt** — custom tags from the Prepend Prompt setting (if set)
+3. **Shot Tags** — Danbooru tags for the active shot type (e.g. `close-up, face focus` for CLOSE)
+4. **LLM Prompt** — the prompt the LLM wrote in the marker
+5. **Append Prompt** — custom tags from the Append Prompt setting (if set)
 
 If resolution or shot lock is active, the locked values are used regardless of what the LLM specified.
 

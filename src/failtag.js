@@ -8,10 +8,12 @@
 // paths.
 //
 // The placeholder this module builds carries everything a second attempt needs —
-// prompt, aspect ratio, shot and the seed that was resolved — in data attributes
-// on the span, exactly the way `<img>` carries `data-prompt` and `data-seed`
-// (src/imgtag.js). Switch ComfyUI on, press Retry, and the placeholder turns into
-// the image it was always meant to be.
+// prompt, aspect ratio, shot, the seed that was resolved, and on the dedicated
+// path the characters the prompter drew (which is what the retry re-resolves the
+// ComfyUI-only registry prefix from) — in data attributes on the span, exactly the
+// way `<img>` carries `data-prompt` and `data-seed` (src/imgtag.js). Switch ComfyUI
+// on, press Retry, and the placeholder turns into the image it was always meant to
+// be.
 //
 // Pure string handling on purpose — no SillyTavern access, no settings read — so
 // it behaves the same on `message.mes` and on rendered DOM.
@@ -27,6 +29,9 @@ const AR_REGEX = /data-ar="([^"]*)"/;
 const SHOT_REGEX = /data-shot="([^"]*)"/;
 const SEED_REGEX = /data-seed="([^"]*)"/;
 const ERROR_REGEX = /data-error="([^"]*)"/;
+// The characters the prompter drew, which is what lets a retry resolve the same
+// ComfyUI-only prefix the failed attempt used. Absent on marker-path failures.
+const CHARACTERS_REGEX = /data-characters="([^"]*)"/;
 
 // What the user reads in the message body. The failure's own text goes in a
 // tooltip instead: a ComfyUI stack trace in the middle of a scene is noise.
@@ -61,7 +66,7 @@ function unescapeAttr(value) {
 }
 
 /**
- * @typedef {{ tag: string, prompt: string, ar: string, shot: string, seed: number | null, error: string, offset: number }} FailedTag
+ * @typedef {{ tag: string, prompt: string, ar: string, shot: string, seed: number | null, error: string, characters: string[], offset: number }} FailedTag
  */
 
 /**
@@ -73,9 +78,10 @@ function unescapeAttr(value) {
  * @param {string} params.shot - Shot token
  * @param {number} [params.seed] - The seed that was resolved, when one was
  * @param {any} [params.error] - Why it failed; shown as a tooltip, not as body text
+ * @param {string[]} [params.characters] - Who the prompter drew, so a retry resolves the same prefix
  * @returns {string}
  */
-export function buildFailedTag({ prompt, ar, shot, seed, error = "" }) {
+export function buildFailedTag({ prompt, ar, shot, seed, error = "", characters = [] }) {
     // `class` stays first: the tag regex anchors on it.
     const attributes = [
         "class=\"comfyinject-failed\"",
@@ -90,6 +96,12 @@ export function buildFailedTag({ prompt, ar, shot, seed, error = "" }) {
     const reason = escapeAttr(String(error?.message ?? error ?? "").slice(0, MAX_ERROR_CHARS));
     if (reason) attributes.push(`data-error="${reason}"`);
 
+    // JSON, escaped for the attribute: the names go back through a parser, so a
+    // hand edit that mangles this degrades to no prefix rather than to a throw.
+    if (Array.isArray(characters) && characters.length) {
+        attributes.push(`data-characters="${escapeAttr(JSON.stringify(characters))}"`);
+    }
+
     return `<span ${attributes.join(" ")}>${FAILED_LABEL}</span>`;
 }
 
@@ -101,6 +113,23 @@ export function buildFailedTag({ prompt, ar, shot, seed, error = "" }) {
 function parseOne(tag, offset) {
     const seed = parseInt(tag.match(SEED_REGEX)?.[1] ?? "", 10);
 
+    // A mangled or absent attribute is no prefix, never a throw: this runs on the
+    // rendered DOM of every message scanned.
+    let characters = [];
+    const rawCharacters = tag.match(CHARACTERS_REGEX)?.[1];
+    if (rawCharacters) {
+        try {
+            const parsed = JSON.parse(unescapeAttr(rawCharacters));
+            if (Array.isArray(parsed)) {
+                characters = parsed
+                    .map(value => (typeof value === "string" ? value.trim() : ""))
+                    .filter(Boolean);
+            }
+        } catch {
+            characters = [];
+        }
+    }
+
     return {
         tag,
         offset,
@@ -111,6 +140,7 @@ function parseOne(tag, offset) {
         // "seed 0" — the same distinction imgtag.js draws.
         seed: Number.isFinite(seed) ? seed : null,
         error: unescapeAttr(tag.match(ERROR_REGEX)?.[1] ?? ""),
+        characters,
     };
 }
 

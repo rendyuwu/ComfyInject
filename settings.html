@@ -272,6 +272,7 @@
                     <code>&lt;lora:character_style:0.7&gt;</code> pinned to one character — put it in that
                     character's row; a dropped call is re-inserted and does not count against <b>Max tags</b>.
                     Needs <b>Use the appearance registry</b> on.
+                    A character LoRA the prompter never needs to see belongs in that row's ComfyUI-only field instead: it is prepended at send time and bypasses this setting entirely.
                 </small>
 
                 <label class="checkbox_label" for="comfyinject_prompter_appearance_autoseed" title="Spend one extra LLM call the first time the prompter runs in a chat, reading the character cards, every bound lorebook and the chat itself to fill the registry.">
@@ -574,7 +575,7 @@
                     <label for="comfyinject_prepend_prompt">Prepend Prompt</label>
                     <textarea id="comfyinject_prepend_prompt" class="text_pole" rows="2" placeholder="Tags to prepend before the LLM's prompt"></textarea>
                 </div>
-                <small>This will be the very first thing in the positive prompt, before shot tags and the LLM's output.</small>
+                <small>This comes first, before shot tags and the LLM's output. The only thing ahead of it is a registry row's ComfyUI-only field, which is prepended at send time.</small>
 
                 <!-- Negative Prompt -->
                 <div class="flex-container flexGap5 alignItemsCenter">

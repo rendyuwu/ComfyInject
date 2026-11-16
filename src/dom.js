@@ -4,6 +4,7 @@ import { saveLastSeed, getImageData } from "./state.js";
 import { notifyFailure, notifyRepair, notifyWarning, repairToastsEnabled } from "./notify.js";
 import { buildImgTag, countImageTags, parseImageTags, replaceImageTags } from "./imgtag.js";
 import { buildFailedTag, parseFailedTags, replaceFailedTags } from "./failtag.js";
+import { registryPromptPrefix } from "./prompter/appearance.js";
 import { MODULE_NAME } from "../settings.js";
 
 /**
@@ -639,6 +640,9 @@ async function retryImage(sendDate, imgIndex) {
             seed: newSeed,
             messageIndex,
             bypassSeedLock: true,
+            // A dedicated-path image carries who was in it; a marker-path entry
+            // has no such metadata and resolves to "".
+            prefix: registryPromptPrefix(imageData.characters),
         });
     } catch (err) {
         console.error(`[ComfyInject] Retry failed for message ${messageIndex} image ${imgIndex}:`, err);
@@ -769,6 +773,9 @@ async function retryFailedImage(sendDate, failIndex) {
             shot: retryShot,
             seed: retrySeed,
             messageIndex,
+            // Re-resolved from the names on the placeholder, not replayed from the
+            // failed attempt, so an edited field takes effect on the retry.
+            prefix: registryPromptPrefix(failed.characters),
         });
     } catch (err) {
         console.error(`[ComfyInject] Retry of a failed image in message ${messageIndex} failed again:`, err);
@@ -818,6 +825,11 @@ async function retryFailedImage(sendDate, failIndex) {
         resolution: result.resolution,
         shotTags: result.shotTags,
         repairMeta: null,
+        // Without this the image's own Retry button would lose the prefix the
+        // recovered render used. Marker-path placeholders carry no names.
+        ...(Array.isArray(target.characters) && target.characters.length
+            ? { characters: target.characters }
+            : {}),
     }], { insertAt: imagePosition });
 
     console.log(`[ComfyInject] Recovered a failed image in message ${currentIndex}`);

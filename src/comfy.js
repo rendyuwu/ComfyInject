@@ -178,6 +178,7 @@ function buildImageUrl(filename, subfolder, host) {
  * @property {number} seed - The resolved numeric seed (LOCK/RANDOM already resolved by state.js)
  * @property {number} messageIndex - The index of the message being processed (needed for LOCK seed resolution)
  * @property {boolean} [bypassSeedLock] - If true, skip the seed lock and use the provided seed directly (used by retry)
+ * @property {string} [prefix] - Text placed at the very start of the positive prompt, ahead of Prepend Prompt and shot tags. Used for registry pins the prompter never sees.
  *
  * @typedef {{imageUrl: string, seed: number, prompt: string, promptId: string, filename: string, effectiveAr: string, effectiveShot: string, resolution: {width: number, height: number}, shotTags: string}} GenerateImageResult
  */
@@ -204,7 +205,7 @@ export function generateImage(params) {
  * @param {GenerateImageParams} params
  * @returns {Promise<GenerateImageResult>}
  */
-async function runGeneration({ prompt, ar, shot, seed, messageIndex, bypassSeedLock = false }) {
+async function runGeneration({ prompt, ar, shot, seed, messageIndex, bypassSeedLock = false, prefix = "" }) {
     const settings = getSettings();
 
     // Resolve resolution — use locked resolution if enabled, otherwise use the AR token
@@ -224,8 +225,15 @@ async function runGeneration({ prompt, ar, shot, seed, messageIndex, bypassSeedL
     const prepend = substituteTrimmed(settings.prepend_prompt);
     const append = substituteTrimmed(settings.append_prompt);
 
-    // Build the final positive prompt: prepend prompt, shot tags, LLM prompt, append prompt
-    const parts = [prepend, shotTag, prompt, append].filter(Boolean);
+    // Registry pins — a character LoRA, say — go first: at the start of the prompt
+    // is where a LoRA is read as defining the whole render rather than as a detail
+    // of it. `.filter(Boolean)` keeps an empty prefix from leaving a leading comma,
+    // so an unfilled field changes the prompt not at all.
+    const promptPrefix = String(prefix ?? "").trim();
+
+    // Build the final positive prompt: registry prefix first, then prepend prompt,
+    // shot tags, LLM prompt, append prompt.
+    const parts = [promptPrefix, prepend, shotTag, prompt, append].filter(Boolean);
     const positivePrompt = parts.join(", ");
 
     // Resolve seed — use locked seed mode if enabled (unless bypassed by retry), otherwise use the provided seed

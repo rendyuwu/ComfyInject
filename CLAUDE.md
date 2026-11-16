@@ -113,4 +113,4 @@ New settings keys are merged key-by-key into saved settings on load (`index.js:i
 
 `workflows/comfyinject_default.json` is a ComfyUI API-format workflow with `"{{PLACEHOLDER}}"` strings. `comfy.js:fillWorkflow()` does a JSON-string substitution that replaces the quoted placeholder including its quotes, which is how typed values (integers, floats) get in. Supported placeholders and the positive-prompt composition order are documented in `workflows/workflows_README.md`.
 
-Positive prompt is assembled as: Prepend Prompt, shot tags, the LLM's prompt, Append Prompt. Prepend/Append are added in `comfy.js` *after* the prompter is done, so **Banned tags** and **Max tags** do not apply to them.
+Positive prompt is assembled as: registry ComfyUI-only prefix (dedicated path only, from the per-character registry rows), Prepend Prompt, shot tags, the LLM's prompt, Append Prompt. The registry prefix, Prepend and Append are added in `comfy.js` *after* the prompter is done, so **Banned tags** and **Max tags** do not apply to them.
