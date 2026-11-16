@@ -174,6 +174,7 @@ function addRetryButtons(index) {
 
     addImageRetryButtons(messageNode, sendDate);
     addFailedRetryButtons(messageNode, sendDate);
+    addPrompterRetryButtons(messageNode, sendDate);
 }
 
 /**
@@ -217,12 +218,51 @@ function addImageRetryButtons(messageNode, sendDate) {
 }
 
 /**
- * Adds a Retry affordance to every failed-generation placeholder in a message.
+ * The chrome both placeholder families share. One injector draws the button for
+ * both, so the two cannot drift apart on style or placement.
+ */
+const PLACEHOLDER_STYLE = "opacity: 0.75; border: 1px dashed var(--SmartThemeBorderColor); border-radius: 4px; padding: 1px 6px;";
+const PLACEHOLDER_BUTTON_STYLE = "cursor: pointer; margin-left: 6px; padding: 1px 8px; border-radius: 4px; background: rgba(0,0,0,0.45); color: white; font-size: 12px; white-space: nowrap;";
+
+// The body retry injected beside a prompter-failure placeholder. prompter/director.js
+// owns the click: a prompter failure needs a new LLM call, which is that module's
+// business, so the class is exported rather than the handler.
+export const PROMPTER_RETRY_CLASS = "comfyinject-retry-prompter";
+
+/**
+ * Styles a placeholder and inserts its Retry button after it.
  *
  * The placeholder itself is saved text, so it survives a reload; the button is
  * pure DOM injection like the image retry button, for the same reason — ST's
  * sanitizer strips anything custom out of a message's saved text.
  *
+ * @param {Element} placeholder
+ * @param {string} className - The button's class, which is also its idempotency key
+ * @param {string} title
+ * @returns {HTMLSpanElement | null} The new button, or null when it already had one
+ */
+function addPlaceholderButton(placeholder, className, title) {
+    // Don't add a second button if one already exists
+    if (placeholder.nextElementSibling?.classList?.contains(className)) return null;
+
+    placeholder.style.cssText = PLACEHOLDER_STYLE;
+    // The backend's own words, out of the way of the scene but one hover from the
+    // person who has to work out why nothing was drawn.
+    const reason = placeholder.getAttribute("data-error");
+    if (reason) placeholder.title = reason;
+
+    const btn = document.createElement("span");
+    btn.className = className;
+    btn.title = title;
+    btn.style.cssText = PLACEHOLDER_BUTTON_STYLE;
+    btn.innerHTML = `<i class="fa-solid fa-rotate"></i> Retry`;
+
+    placeholder.after(btn);
+    return btn;
+}
+
+/**
+ * Adds a Retry affordance to every failed-generation placeholder in a message.
  * @param {Element} messageNode - The message's rendered DOM node
  * @param {string} sendDate - The message's send_date
  */
@@ -231,31 +271,35 @@ function addFailedRetryButtons(messageNode, sendDate) {
     if (placeholders.length === 0) return;
 
     placeholders.forEach((placeholder, failIndex) => {
-        // Don't add a second button if one already exists
-        if (placeholder.nextElementSibling?.classList?.contains("comfyinject-retry-failed")) return;
+        const btn = addPlaceholderButton(placeholder, "comfyinject-retry-failed", "Generate this image again with the same prompt");
+        if (!btn) return;
 
-        placeholder.style.cssText = "opacity: 0.75; border: 1px dashed var(--SmartThemeBorderColor); border-radius: 4px; padding: 1px 6px;";
-        // The backend's own words, out of the way of the scene but one hover
-        // from the person who has to work out why nothing was drawn.
-        const reason = placeholder.getAttribute("data-error");
-        if (reason) placeholder.title = reason;
-
-        const btn = document.createElement("span");
-        btn.className = "comfyinject-retry-failed";
         btn.dataset.senddate = sendDate;
         btn.dataset.failindex = String(failIndex);
-        btn.title = "Generate this image again with the same prompt";
-        btn.style.cssText = "cursor: pointer; margin-left: 6px; padding: 1px 8px; border-radius: 4px; background: rgba(0,0,0,0.45); color: white; font-size: 12px; white-space: nowrap;";
-        btn.innerHTML = `<i class="fa-solid fa-rotate"></i> Retry`;
 
         btn.addEventListener("click", async (e) => {
             e.stopPropagation();
             e.preventDefault();
             await retryFailedImage(sendDate, failIndex);
         });
-
-        placeholder.after(btn);
     });
+}
+
+/**
+ * Adds a Retry affordance to every prompter-failure placeholder in a message.
+ *
+ * No click listener here on purpose: retrying asks the LLM again, and that path
+ * belongs to prompter/director.js, whose delegated listener picks the button up by
+ * class. Nothing is replayed, so there is nothing to bind to a specific failure.
+ *
+ * @param {Element} messageNode - The message's rendered DOM node
+ * @param {string} sendDate - The message's send_date
+ */
+function addPrompterRetryButtons(messageNode, sendDate) {
+    for (const placeholder of messageNode.querySelectorAll(".custom-comfyinject-prompter-failed")) {
+        const btn = addPlaceholderButton(placeholder, PROMPTER_RETRY_CLASS, "Ask the prompter to illustrate this message again");
+        if (btn) btn.dataset.senddate = sendDate;
+    }
 }
 
 /**

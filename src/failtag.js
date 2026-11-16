@@ -24,6 +24,12 @@
 // public/scripts/chats.js's uponSanitizeAttribute hook).
 const FAILED_TAG_REGEX = /<span class="(?:custom-)?comfyinject-failed"[^>]*>.*?<\/span>/gs;
 
+// A prompter request can fail before any image directive exists, so there is
+// nothing for the image-failure placeholder to hold. This one records only the
+// error and points at the per-message retry that asks the LLM again.
+const PROMPTER_FAILED_TAG_REGEX =
+    /<span class="(?:custom-)?comfyinject-prompter-failed"[^>]*>.*?<\/span>/gs;
+
 const PROMPT_REGEX = /data-prompt="([^"]*)"/;
 const AR_REGEX = /data-ar="([^"]*)"/;
 const SHOT_REGEX = /data-shot="([^"]*)"/;
@@ -36,6 +42,8 @@ const CHARACTERS_REGEX = /data-characters="([^"]*)"/;
 // What the user reads in the message body. The failure's own text goes in a
 // tooltip instead: a ComfyUI stack trace in the middle of a scene is noise.
 export const FAILED_LABEL = "[Image generation failed]";
+
+export const PROMPTER_FAILED_LABEL = "[Prompter request failed]";
 
 // A backend error message can be a whole HTML page. Only enough of it to tell a
 // refused connection from a bad checkpoint name is kept.
@@ -197,4 +205,36 @@ export function replaceFailedTags(mes, replacer) {
  */
 export function stripFailedTags(mes) {
     return replaceFailedTags(mes, () => "");
+}
+
+/**
+ * Builds the placeholder that stands in for a prompter call that never produced
+ * a directive. It carries no prompt or seed on purpose: the retry re-asks the
+ * LLM instead of replaying anything.
+ * @param {object} [params]
+ * @param {any} [params.error] - Why it failed; shown as a tooltip
+ * @returns {string}
+ */
+export function buildPrompterFailedTag({ error = "" } = {}) {
+    const reason = escapeAttr(String(error?.message ?? error ?? "").slice(0, MAX_ERROR_CHARS));
+    const attributes = ["class=\"comfyinject-prompter-failed\""];
+    if (reason) attributes.push(`data-error="${reason}"`);
+    return `<span ${attributes.join(" ")}>${PROMPTER_FAILED_LABEL}</span>`;
+}
+
+/**
+ * @param {any} mes
+ * @returns {number}
+ */
+export function countPrompterFailedTags(mes) {
+    const text = String(mes ?? "");
+    return text ? [...text.matchAll(PROMPTER_FAILED_TAG_REGEX)].length : 0;
+}
+
+/**
+ * @param {any} mes
+ * @returns {string}
+ */
+export function stripPrompterFailedTags(mes) {
+    return String(mes ?? "").replace(PROMPTER_FAILED_TAG_REGEX, "");
 }

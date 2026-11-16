@@ -9,7 +9,7 @@
 // probed with typeof, so an older or newer SillyTavern degrades to less material
 // instead of throwing.
 
-import { stripFailedTags } from "../failtag.js";
+import { stripFailedTags, stripPrompterFailedTags } from "../failtag.js";
 import { replaceImageTags } from "../imgtag.js";
 import { substituteTrimmed } from "../macros.js";
 import { debugLog } from "./log.js";
@@ -54,7 +54,7 @@ function trim(value) {
  * @returns {string}
  */
 export function stripImages(text) {
-    return stripFailedTags(replaceImageTags(text, () => ""))
+    return stripPrompterFailedTags(stripFailedTags(replaceImageTags(text, () => "")))
         .replace(MARKER_REGEX, "")
         .trim();
 }

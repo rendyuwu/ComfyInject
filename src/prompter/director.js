@@ -27,9 +27,10 @@ import {
     countComfyImages,
     findIndexBySendDate,
     persistMessageImages,
+    PROMPTER_RETRY_CLASS,
     renderMessageWithSuffix,
 } from "../dom.js";
-import { buildFailedTag, countFailedTags } from "../failtag.js";
+import { buildFailedTag, buildPrompterFailedTag, countFailedTags, countPrompterFailedTags, stripPrompterFailedTags } from "../failtag.js";
 import { isTimeoutError as isFetchTimeout } from "../http.js";
 import { buildImgTag } from "../imgtag.js";
 import { notifyFailure, notifyWarning } from "../notify.js";
@@ -100,6 +101,34 @@ function reportFailure(text, manual) {
 }
 
 /**
+ * Rewrites the prompter-failure placeholder on a message: replaced with the one
+ * `buildTag` returns, or removed when it returns nothing.
+ *
+ * Without a directive there is nothing to replay, so the placeholder only records
+ * that the call failed and the way back is another LLM call.
+ *
+ * @param {string} sendDate
+ * @param {number} fallbackIndex
+ * @param {(() => string) | null} buildTag - Null to clear
+ */
+async function writePrompterFailure(sendDate, fallbackIndex, buildTag) {
+    let index = findIndexBySendDate(sendDate);
+    if (index === -1) index = fallbackIndex;
+    const message = ctx().chat?.[index];
+    if (!message || message.send_date !== sendDate) return;
+
+    const stripped = stripPrompterFailedTags(message.mes);
+    const tag = buildTag ? buildTag() : "";
+    // Only when the text actually changed: a clear on a message that has no
+    // placeholder would otherwise save the chat for nothing.
+    if (!tag && stripped === message.mes) return;
+
+    message.mes = stripped.trimEnd();
+    if (tag) appendImageToMessage(message, tag);
+    await persistMessageImages(index, message, [], { appendMetadata: true });
+}
+
+/**
  * Runs the prompter for one message and generates whatever it asks for.
  * @param {number} messageIndex
  * @param {object} options
@@ -117,6 +146,11 @@ async function runDirector(messageIndex, { manual }) {
     const signal = controller.signal;
 
     try {
+        // A credit/backend outage also fails the one-time seeding pass, which
+        // memoizes the chat in `seedFailures` for the session. A user-initiated
+        // retry is a fresh attempt at the whole run, so let seeding try again too.
+        if (manual) resetAppearanceState();
+
         // One extra call on the first dedicated run in a chat, and never again.
         // It is deliberately inside the in-flight window and before the context
         // is built, so the very first image already has the registry to work from.
@@ -168,8 +202,13 @@ async function runDirector(messageIndex, { manual }) {
                 return;
             }
             warnLog("prompter request failed", getErrorChain(err));
+            await writePrompterFailure(sendDate, messageIndex, () =>
+                buildPrompterFailedTag({ error: getErrorChain(err).join(" | ") })
+            );
             reportFailure(
-                isTimeoutError(err) ? "The prompter request timed out." : "The prompter request failed.",
+                isTimeoutError(err)
+                    ? "The prompter request timed out. Press Retry on the message."
+                    : "The prompter request failed. Press Retry on the message.",
                 manual
             );
             return;
@@ -182,7 +221,13 @@ async function runDirector(messageIndex, { manual }) {
             parsed = parseDirective(result.payload);
         } catch (err) {
             warnLog("prompter reply could not be parsed", err?.message || err);
-            reportFailure(err?.message || "The prompter's reply could not be parsed.", manual);
+            await writePrompterFailure(sendDate, messageIndex, () =>
+                buildPrompterFailedTag({ error: getErrorChain(err).join(" | ") })
+            );
+            reportFailure(
+                `${err?.message || "The prompter's reply could not be parsed."} Press Retry on the message.`,
+                manual
+            );
             return;
         }
 
@@ -209,6 +254,9 @@ async function runDirector(messageIndex, { manual }) {
 
         if (!validated.generate) {
             debugLog("decision: skip", { messageIndex, reason: validated.reason });
+            // A retried message the prompter now declines is not broken any more;
+            // leaving the placeholder would claim otherwise.
+            await writePrompterFailure(sendDate, messageIndex, null);
             if (debugEnabled()) {
                 toastr.info(
                     `Prompter skipped this message${validated.reason ? `: ${validated.reason}` : ""}`,
@@ -255,6 +303,10 @@ async function runDirector(messageIndex, { manual }) {
     } finally {
         inFlight = false;
         controller = null;
+        // persistMessageImages() re-renders the message, which drops the hover-row
+        // wand this module injects; without this the button is gone until the next
+        // unrelated render. The body retry is re-injected by src/dom.js instead.
+        scheduleDirectButtons();
     }
 }
 
@@ -326,6 +378,10 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
                 // seed — and a Retry button spends nothing but an HTTP request
                 // once ComfyUI is reachable again.
                 const currentMessage = ctx().chat[currentIndex];
+                // The retried message must not keep the old failure text next to
+                // the new outcome. Stripped here, at the persist that replaces the
+                // message text, so an aborted run never loses it unsaved.
+                currentMessage.mes = stripPrompterFailedTags(currentMessage.mes);
                 appendImageToMessage(currentMessage, buildFailedTag({
                     prompt: image.prompt,
                     ar: image.ar,
@@ -370,6 +426,9 @@ async function generateAndAppend({ sendDate, fallbackIndex, images, reason, sign
 
         saveLastSeed(result.seed);
 
+        // Same as the failure path: the placeholder goes only as the text that
+        // replaces it is written.
+        message.mes = stripPrompterFailedTags(message.mes);
         appendImageToMessage(message, buildImgTag(result.imageUrl, result.prompt, result.seed));
         await persistMessageImages(index, message, [{
             ar: image.ar,
@@ -426,8 +485,11 @@ async function onCharacterMessage(index, type) {
     // A failure placeholder counts as an image here. It already holds a directive
     // this prompter wrote, and its Retry button is a cheaper and more faithful way
     // to get the picture than a second LLM call that would invent a new prompt.
-    if (countComfyImages(message.mes) > 0 || countFailedTags(message.mes) > 0) {
-        debugLog("skipping: the message already has an image or a failed one", index);
+    // A prompter-failure placeholder counts too: a re-render of that message must
+    // not quietly spend another LLM call on it, and its own Retry is that call's
+    // deliberate trigger.
+    if (countComfyImages(message.mes) > 0 || countFailedTags(message.mes) > 0 || countPrompterFailedTags(message.mes) > 0) {
+        debugLog("skipping: the message already has an image, failed image or failed prompter", index);
         return;
     }
 
@@ -467,11 +529,29 @@ function setButtonBusy(button, busy) {
 }
 
 /**
+ * Swaps the icon inside the body retry button; the label stays put.
+ * @param {HTMLElement} button
+ * @param {boolean} busy
+ */
+function setRetryBusy(button, busy) {
+    const icon = button.querySelector("i");
+    if (icon) {
+        icon.classList.toggle("fa-rotate", !busy);
+        icon.classList.toggle("fa-spinner", busy);
+        icon.classList.toggle("fa-spin", busy);
+    }
+    button.style.pointerEvents = busy ? "none" : "";
+}
+
+/**
  * Adds the manual trigger to every bot message's button row, and removes them
  * all again when the dedicated path is switched off.
  *
  * Like the retry buttons, these are pure DOM injection and never persisted —
  * ST's sanitizer strips anything custom out of a message's saved text.
+ *
+ * The prompter Retry beside a failure placeholder is injected by src/dom.js with
+ * every other retry button, so it survives renders this module never sees.
  */
 export function addDirectButtons() {
     const enabled = dedicatedEnabled();
@@ -510,14 +590,36 @@ function scheduleDirectButtons() {
  */
 async function onDirectClick(event) {
     const target = /** @type {HTMLElement | null} */ (event.target);
+    const retry = target?.closest?.(`.${PROMPTER_RETRY_CLASS}`);
     const button = target?.closest?.(`.${DIRECT_BUTTON_CLASS}`);
-    if (!(button instanceof HTMLElement)) return;
+    if (!(retry instanceof HTMLElement) && !(button instanceof HTMLElement)) return;
 
     event.preventDefault();
     event.stopPropagation();
 
     if (inFlight) {
         toastr.info("The prompter is already working on a message.", "ComfyInject");
+        return;
+    }
+
+    if (retry instanceof HTMLElement) {
+        // The placeholder is saved text and outlives a switch away from the
+        // dedicated path, so say why this cannot run rather than doing nothing.
+        if (!dedicatedEnabled()) {
+            toastr.info("Switch the trigger mode back to Dedicated or Both to retry the prompter.", "ComfyInject");
+            return;
+        }
+        // By send_date, not mesid: the placeholder outlives deletions above it.
+        const sendDate = retry.dataset.senddate;
+        const index = findIndexBySendDate(sendDate);
+        if (index === -1) return;
+
+        setRetryBusy(retry, true);
+        try {
+            await runDirector(index, { manual: true });
+        } finally {
+            setRetryBusy(retry, false);
+        }
         return;
     }
 

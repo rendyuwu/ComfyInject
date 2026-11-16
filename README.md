@@ -42,6 +42,7 @@ Everything after the prompt is shared by both modes. Multiple images per message
       <a href="#retry-button">Retry Button</a>
       <ul>
         <li><a href="#retrying-an-image-that-never-generated">Retrying an image that never generated</a></li>
+        <li><a href="#retrying-a-prompter-request-that-failed">Retrying a prompter request that failed</a></li>
       </ul>
     </li>
     <li><a href="#local-image-saving">Local Image Saving</a></li>
@@ -809,6 +810,23 @@ Three things follow from the placeholder holding the prompt:
 - **The prompter stands down on a message that has one.** A failed placeholder counts as an image for the purpose of "this message has already been illustrated", so a swipe or a re-render will not quietly spend another call on it.
 
 Placeholders are never sent to your roleplay model — [outbound rewriting](#how-it-works) strips them, the same way it rewrites real images into compact tokens. A marker that could not be *parsed* at all is a different case and still shows a plain `[Image marker invalid]`: there is no prompt in it to retry.
+
+### Retrying a prompter request that failed
+
+With **Run automatically on new messages** on, a prompter call that fails — an empty provider balance, a bad key, a network drop, a timeout — leaves a different placeholder in the message:
+
+> `[Prompter request failed]` **⟳ Retry**
+
+It is saved text, so it survives a reload, and it carries the provider's own error as a tooltip. Fix the cause, press **Retry**, and the prompter runs again on that message against the backend that now answers.
+
+What differs from the image placeholder:
+
+- **Retry costs an LLM call.** The request failed before any directive existed, so there is nothing to replay: the whole dedicated path runs again and may illustrate the message differently, or decide not to illustrate it at all — in which case the placeholder is removed.
+- **It is replaced, not stacked.** A second failure overwrites the placeholder instead of adding another, and switching to the hover-row wand behaves the same way.
+- **Retrying re-attempts appearance seeding.** A backend outage also fails the one-time registry seed, which is otherwise remembered as failed for the session; a manual retry is a fresh attempt at the whole run.
+- **It does not appear for a context refusal.** "No message with text to illustrate." means there was nothing to send, and no backend fix changes that.
+
+The placeholder is stripped from everything a language model reads, the prompter's own history included. If the trigger mode is switched back to Marker, the placeholder stays in the message but its Retry points out that the prompter path is off rather than running a call configured away.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

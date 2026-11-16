@@ -1,5 +1,5 @@
 import { MODULE_NAME } from "../settings.js";
-import { stripFailedTags } from "./failtag.js";
+import { stripFailedTags, stripPrompterFailedTags } from "./failtag.js";
 import { replaceImageTags } from "./imgtag.js";
 
 /**
@@ -107,8 +107,11 @@ globalThis.comfyInjectInterceptor = async function(chat, contextSize, abort, typ
 
         // A failed image is an extension-internal artifact. Sending its
         // placeholder would hand the main model a picture that does not exist,
-        // plus the prompt text of one it is not supposed to be writing.
+        // plus the prompt text of one it is not supposed to be writing. The same
+        // goes for the prompter's own failure placeholder: it names a call the
+        // roleplay model never made.
         message.mes = stripFailedTags(message.mes);
+        message.mes = stripPrompterFailedTags(message.mes);
 
         // Only when something was actually removed: tidyGaps trims, and trimming a
         // message nothing was taken out of would be an edit of the user's own text.
