@@ -1,6 +1,7 @@
 import { initDom } from "./src/dom.js";
 import { initUI } from "./src/ui.js";
 import { initLazyImages } from "./src/lazy-images.js";
+import { initRenderCap } from "./src/render-cap.js";
 import { initCleanup } from "./src/cleanup.js";
 import { initLightbox } from "./src/lightbox.js";
 import { initDirector } from "./src/prompter/director.js";
@@ -65,6 +66,7 @@ function migrateSeedSystemPrompt(saved) {
 
     initSettings();
     initLazyImages();
+    initRenderCap();
     initLightbox();
     await initUI();
     initDom();

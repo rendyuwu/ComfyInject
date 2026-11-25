@@ -59,6 +59,13 @@ export const defaultSettings = Object.freeze({
     // forever. Images that another chat still shows are always kept.
     delete_images_with_chat: true,
 
+    // --- Chat Rendering ---
+    // How many of the newest ComfyInject images stay rendered in the chat.
+    // Older ones collapse to a placeholder that re-shows its message's images
+    // on tap, so a long roleplay does not pile decoded images up on a phone.
+    // The chat file itself is never touched — 0 renders every image.
+    render_recent_images: 3,
+
     // --- Negative Prompt ---
     negative_prompt: "worst quality, low quality, blurry, deformed, ugly, extra limbs",
 

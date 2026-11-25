@@ -82,6 +82,27 @@
 
             <hr class="sysHR" />
 
+            <!-- Chat Rendering -->
+            <div>
+                <div class="flex-container flexGap5 alignItemsCenter" title="Only keep this many of the newest generated images rendered in the chat. Older ones collapse to a small placeholder you can tap to see them again — the images stay in the chat file either way. Keeps long roleplays fast on phones. Set to 0 to always show every image.">
+                    <label for="comfyinject_render_recent_images" style="width: 150px;">Keep recent images</label>
+                    <input
+                        id="comfyinject_render_recent_images"
+                        type="number"
+                        class="text_pole"
+                        min="0"
+                        max="100"
+                        step="1"
+                        style="width: 70px;"
+                    />
+                </div>
+                <small class="comfyinject-row">
+                    0 shows every image. Reload the chat to re-apply after changing this.
+                </small>
+            </div>
+
+            <hr class="sysHR" />
+
             <!-- Gallery Button -->
             <div class="flex-container flexGap5">
                 <div id="comfyinject_gallery_btn" class="menu_button menu_button_icon">

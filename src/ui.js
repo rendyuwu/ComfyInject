@@ -546,6 +546,7 @@ function populateUI() {
     $("#comfyinject_downscale_max_dimension").val(settings.downscale_max_dimension);
     $("#comfyinject_webp_quality").val(settings.webp_quality);
     $("#comfyinject_delete_images_with_chat").prop("checked", settings.delete_images_with_chat);
+    $("#comfyinject_render_recent_images").val(settings.render_recent_images);
     updateSaveImagesUI(settings.save_images_locally, settings.downscale_before_saving);
 
     // Resolution lock
@@ -858,6 +859,13 @@ function wireEvents() {
     // Local image saving — delete images with their chat
     $("#comfyinject_delete_images_with_chat").on("change", function () {
         getSettings().delete_images_with_chat = $(this).prop("checked");
+        saveSettings();
+    });
+
+    // Chat rendering — how many recent images stay rendered
+    $("#comfyinject_render_recent_images").on("input", function () {
+        const parsed = intOr($(this).val(), defaultSettings.render_recent_images);
+        getSettings().render_recent_images = Math.max(0, parsed);
         saveSettings();
     });
 

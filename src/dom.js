@@ -182,7 +182,7 @@ function addRetryButtons(index) {
  * @param {Element} messageNode - The message's rendered DOM node
  * @param {string} sendDate - The message's send_date
  */
-function addImageRetryButtons(messageNode, sendDate) {
+export function addImageRetryButtons(messageNode, sendDate) {
     // ST's sanitizer prefixes custom classes with "custom-" in the rendered DOM
     const images = messageNode.querySelectorAll(".custom-comfyinject-image");
     if (images.length === 0) return;
